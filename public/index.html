@@ -6,6 +6,20 @@
     <meta name="theme-color" content="#000000" />
     <meta name="description" content="LegalConnect - Connect with lawyers" />
     <title>LegalConnect</title>
+    <script>
+      // Make ethereum property configurable to prevent redefinition errors
+      if (typeof window.ethereum !== 'undefined') {
+        try {
+          Object.defineProperty(window, 'ethereum', {
+            configurable: true,
+            writable: true,
+            value: window.ethereum
+          });
+        } catch (e) {
+          console.warn('Could not make ethereum configurable:', e);
+        }
+      }
+    </script>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>

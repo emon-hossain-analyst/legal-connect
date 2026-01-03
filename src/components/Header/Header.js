@@ -35,6 +35,9 @@ const Header = () => {
         <nav className={`${styles.nav} ${isMenuOpen ? styles.navOpen : ''}`}>
           <Link to="/" onClick={() => setIsMenuOpen(false)}>Home</Link>
           <Link to="/lawyers" onClick={() => setIsMenuOpen(false)}>Find Lawyers</Link>
+          <Link to="/cases" onClick={() => setIsMenuOpen(false)}>Case Tracking</Link>
+          <Link to="/legal-updates" onClick={() => setIsMenuOpen(false)}>Legal Updates</Link>
+          <Link to="/feedback" onClick={() => setIsMenuOpen(false)}>Feedback</Link>
           <Link to="/contact" onClick={() => setIsMenuOpen(false)}>Contact</Link>
           
           {isAuthenticated ? (

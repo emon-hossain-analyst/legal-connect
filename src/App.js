@@ -12,6 +12,9 @@ import LawyerDashboard from './pages/Dashboard/LawyerDashboard';
 import DocumentUpload from './pages/DocumentUpload/DocumentUpload';
 import Chat from './pages/Chat/Chat';
 import Contact from './pages/Contact/Contact';
+import CaseTracking from './pages/CaseTracking/CaseTracking';
+import LegalUpdates from './pages/LegalUpdates/LegalUpdates';
+import FeedbackRatings from './pages/FeedbackRatings/FeedbackRatings';
 import './App.css';
 
 function App() {
@@ -29,6 +32,9 @@ function App() {
             <Route path="/client/dashboard" element={<ClientDashboard />} />
             <Route path="/lawyer/dashboard" element={<LawyerDashboard />} />
             <Route path="/documents/upload" element={<DocumentUpload />} />
+            <Route path="/cases" element={<CaseTracking />} />
+            <Route path="/legal-updates" element={<LegalUpdates />} />
+            <Route path="/feedback" element={<FeedbackRatings />} />
             <Route path="/chat/:userId?" element={<Chat />} />
             <Route path="/contact" element={<Contact />} />
             <Route path="*" element={<Navigate to="/" replace />} />

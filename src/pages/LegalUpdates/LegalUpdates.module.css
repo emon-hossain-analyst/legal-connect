@@ -1,0 +1,166 @@
+.legalUpdates {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 3rem;
+}
+
+.header h1 {
+  color: #2c3e50;
+  font-size: 2.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.header p {
+  color: #7f8c8d;
+  font-size: 1.1rem;
+}
+
+.filters {
+  margin-bottom: 2rem;
+  display: flex;
+  justify-content: center;
+}
+
+.categoryFilter {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.categoryFilter label {
+  font-weight: 500;
+  color: #2c3e50;
+}
+
+.select {
+  padding: 0.5rem 1rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: white;
+  font-size: 1rem;
+  cursor: pointer;
+  min-width: 150px;
+}
+
+.updatesList {
+  display: grid;
+  gap: 2rem;
+}
+
+.updateCard {
+  background: white;
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s, box-shadow 0.2s;
+  border: 1px solid #e1e8ed;
+}
+
+.updateCard:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 15px rgba(0, 0, 0, 0.15);
+}
+
+.updateHeader {
+  margin-bottom: 1rem;
+}
+
+.meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.category {
+  background: #3498db;
+  color: white;
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.date {
+  color: #7f8c8d;
+  font-size: 0.9rem;
+}
+
+.updateHeader h3 {
+  color: #2c3e50;
+  font-size: 1.4rem;
+  margin: 0;
+  line-height: 1.3;
+}
+
+.summary {
+  color: #34495e;
+  font-size: 1.1rem;
+  line-height: 1.5;
+  margin-bottom: 1rem;
+  font-weight: 500;
+}
+
+.content {
+  color: #5a6c7d;
+  line-height: 1.6;
+  margin-bottom: 1.5rem;
+}
+
+.actions {
+  display: flex;
+  gap: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e1e8ed;
+}
+
+.readMoreBtn, .shareBtn {
+  padding: 0.6rem 1.2rem;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: background-color 0.2s;
+}
+
+.readMoreBtn {
+  background: #3498db;
+  color: white;
+}
+
+.readMoreBtn:hover {
+  background: #2980b9;
+}
+
+.shareBtn {
+  background: #95a5a6;
+  color: white;
+}
+
+.shareBtn:hover {
+  background: #7f8c8d;
+}
+
+.noUpdates {
+  text-align: center;
+  padding: 3rem;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.noUpdates h3 {
+  color: #2c3e50;
+  margin-bottom: 0.5rem;
+}
+
+.noUpdates p {
+  color: #7f8c8d;
+}
