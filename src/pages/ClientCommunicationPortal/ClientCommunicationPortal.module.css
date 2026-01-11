@@ -1,0 +1,187 @@
+.portal {
+  min-height: 100vh;
+  background-color: #f5f5f5;
+}
+
+.portalLayout {
+  display: flex;
+}
+
+.portalContent {
+  flex: 1;
+  padding: 20px;
+}
+
+.portalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.portalTitle {
+  font-size: 2rem;
+  color: #333;
+  margin: 0;
+}
+
+.tabButtons {
+  display: flex;
+  gap: 10px;
+}
+
+.chatsSection {
+  display: flex;
+  gap: 20px;
+}
+
+.chatsList {
+  flex: 1;
+}
+
+.chatItems {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chatItem {
+  padding: 15px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.chatItem:hover,
+.chatItem.active {
+  background-color: #f0f0f0;
+}
+
+.chatInfo h3 {
+  margin: 0 0 5px 0;
+  font-size: 1.1rem;
+}
+
+.chatInfo p {
+  margin: 0 0 5px 0;
+  color: #666;
+}
+
+.chatTime {
+  font-size: 0.9rem;
+  color: #999;
+}
+
+.unreadBadge {
+  background-color: #007bff;
+  color: white;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 0.8rem;
+}
+
+.chatWindow {
+  flex: 2;
+}
+
+.messagesContainer {
+  max-height: 400px;
+  overflow-y: auto;
+  margin-bottom: 20px;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background-color: #fafafa;
+}
+
+.message {
+  margin-bottom: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  max-width: 70%;
+}
+
+.message.sent {
+  background-color: #007bff;
+  color: white;
+  margin-left: auto;
+}
+
+.message.received {
+  background-color: #e9ecef;
+  color: #333;
+}
+
+.messageTime {
+  font-size: 0.8rem;
+  opacity: 0.7;
+  margin-top: 5px;
+}
+
+.messageInput {
+  display: flex;
+  gap: 10px;
+}
+
+.messageInput input {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.documentsList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.documentItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+}
+
+.documentInfo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.documentIcon {
+  font-size: 1.5rem;
+}
+
+.documentName {
+  margin: 0 0 5px 0;
+  font-weight: bold;
+}
+
+.documentMeta {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.section {
+  margin-bottom: 20px;
+}
+
+.emptyState {
+  text-align: center;
+  color: #666;
+  font-style: italic;
+}
+
+.loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  font-size: 1.2rem;
+  color: #666;
+}
