@@ -49,10 +49,12 @@ const JobBoard = () => {
     if (user && user.user_type === 'lawyer') {
       checkLawyerVerification();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   useEffect(() => {
     fetchJobs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCategory, sortBy, urgentOnly]);
 
   // Real-time subscription for live job board updates
@@ -67,6 +69,7 @@ const JobBoard = () => {
     return () => {
       supabase.removeChannel(channel);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCategory, sortBy, urgentOnly, searchTerm]);
 
   const checkLawyerVerification = async () => {

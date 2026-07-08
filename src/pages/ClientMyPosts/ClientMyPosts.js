@@ -20,12 +20,14 @@ const ClientMyPosts = () => {
     if (user) {
       fetchMyPosts();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   useEffect(() => {
     if (selectedPost) {
       fetchProposals(selectedPost.id);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPost]);
 
   const fetchMyPosts = async () => {

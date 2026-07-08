@@ -18,6 +18,7 @@ const LawyerProposalsView = () => {
     if (user) {
       fetchMyProposals();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   const fetchMyProposals = async () => {
@@ -207,6 +208,7 @@ const LawyerProposalsView = () => {
             const job = prop.job || {};
             const isAnonymous = job.is_anonymous;
             const clientName = isAnonymous ? 'Anonymous Client' : (job.client?.full_name || job.client?.name || 'Client');
+            // eslint-disable-next-line no-unused-vars
             const clientAvatar = isAnonymous ? null : (job.client?.avatar_url || job.client?.profile_picture_url);
             const isUrgent = job.urgency === 'urgent' || job.urgency === 'emergency';
             const isExpanded = expandedId === prop.id;

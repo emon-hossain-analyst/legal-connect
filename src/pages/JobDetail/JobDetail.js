@@ -26,6 +26,7 @@ const JobDetail = () => {
   useEffect(() => {
     window.scrollTo(0, 0);
     fetchJobDetails();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, user]);
 
   const fetchJobDetails = async () => {
