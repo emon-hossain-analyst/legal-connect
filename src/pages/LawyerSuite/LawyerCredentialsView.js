@@ -79,7 +79,7 @@ const LawyerCredentialsView = () => {
         cleanCredForm.year_issued = parseInt(cleanCredForm.year_issued, 10);
       }
       const { error } = await supabase.from('credentials').insert([{
-        lawyer_id: user.id,
+        lawyer_id: user.auth_id || user.id,
         credential_type: credType,
         ...cleanCredForm
       }]);
@@ -114,7 +114,7 @@ const LawyerCredentialsView = () => {
       } else {
         // Insert new
         const { error } = await supabase.from('verifications').insert([{
-          lawyer_id: user.id,
+          lawyer_id: user.auth_id || user.id,
           verification_type: verifType,
           ...cleanVerifForm,
           is_primary: verifType === 'bar_registration' // enforce primary for bar registration

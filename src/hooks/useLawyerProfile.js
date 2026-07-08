@@ -17,7 +17,7 @@ export function useLawyerProfile() {
         const { data, error } = await supabase
           .from('lawyer_profiles')
           .select('*')
-          .eq('id', user.id)
+          .eq('id', user.auth_id || user.id)
           .single();
 
         if (error && error.code !== 'PGRST116') throw error;
@@ -38,7 +38,7 @@ export function useLawyerProfile() {
       const { error } = await Promise.race([
         supabase
           .from('lawyer_profiles')
-          .upsert({ id: user.id, ...updates, updated_at: new Date() }),
+          .upsert({ id: user.auth_id || user.id, ...updates, updated_at: new Date() }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Request timed out. Please check your internet connection or reload the page.')), 10000))
       ]);
       if (error) throw error;

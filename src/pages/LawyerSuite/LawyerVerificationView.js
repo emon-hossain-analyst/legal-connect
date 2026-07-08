@@ -81,9 +81,9 @@ const LawyerVerificationView = () => {
       // Optimistic instant UI update so lawyer immediately sees their uploaded file
       const optimisticDoc = {
         id: 'temp-' + Date.now(),
-        client_id: user.id,
-        lawyer_id: user.id,
-        uploaded_by: user.id,
+        client_id: user.auth_id || user.id,
+        lawyer_id: user.auth_id || user.id,
+        uploaded_by: user.auth_id || user.id,
         file_name: file.name,
         storage_url: publicUrl,
         file_size: file.size,
@@ -99,9 +99,9 @@ const LawyerVerificationView = () => {
       const existingDoc = documents.find(d => d.description === docName);
 
       const docPayload = {
-        client_id: user.id,
-        lawyer_id: user.id,
-        uploaded_by: user.id,
+        client_id: user.auth_id || user.id,
+        lawyer_id: user.auth_id || user.id,
+        uploaded_by: user.auth_id || user.id,
         file_name: file.name,
         storage_url: publicUrl,
         file_size: file.size,

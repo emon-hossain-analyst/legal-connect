@@ -80,7 +80,7 @@ const LawyerAvailabilityView = () => {
     try {
       const rulesToUpsert = Object.values(schedule).map(rule => ({
         ...(rule.id ? { id: rule.id } : {}),
-        lawyer_id: user.id,
+        lawyer_id: user.auth_id || user.id,
         day_of_week: rule.day_of_week,
         start_time: rule.start,
         end_time: rule.end,
