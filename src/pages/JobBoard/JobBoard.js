@@ -92,7 +92,7 @@ const JobBoard = () => {
       setLoading(true);
       let query = supabase
         .from('job_posts')
-        .select('*, client:users!client_id(full_name, avatar_url, name, profile_picture_url)')
+        .select('*')
         .eq('status', 'open');
 
       if (selectedCategory && selectedCategory !== 'All Categories') {
@@ -115,7 +115,34 @@ const JobBoard = () => {
 
       const { data, error } = await query;
       if (error) throw error;
-      setJobs(data || []);
+
+      const jobsData = data || [];
+
+      // Safely enrich with client user info without breaking if join/RLS fails
+      const clientIds = [...new Set(jobsData.map(j => j.client_id).filter(Boolean))];
+      let userMap = {};
+      if (clientIds.length > 0) {
+        try {
+          const { data: usersData } = await supabase
+            .from('users')
+            .select('id, full_name, avatar_url, name, profile_picture_url')
+            .in('id', clientIds);
+          if (usersData) {
+            usersData.forEach(u => {
+              userMap[u.id] = u;
+            });
+          }
+        } catch (uErr) {
+          console.warn('Could not fetch client profiles:', uErr);
+        }
+      }
+
+      const enrichedJobs = jobsData.map(job => ({
+        ...job,
+        client: userMap[job.client_id] || { name: 'Client', full_name: 'Client' }
+      }));
+
+      setJobs(enrichedJobs);
     } catch (err) {
       console.error('Error fetching jobs:', err);
       toast.error('Failed to load job posts');

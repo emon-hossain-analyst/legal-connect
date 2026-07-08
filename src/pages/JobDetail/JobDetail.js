@@ -32,10 +32,10 @@ const JobDetail = () => {
   const fetchJobDetails = async () => {
     try {
       setLoading(true);
-      // 1. Fetch Job Post
+      // 1. Fetch Job Post safely without PostgREST join crash
       const { data: jobData, error: jobError } = await supabase
         .from('job_posts')
-        .select('*, client:users!client_id(full_name, avatar_url, name, profile_picture_url, id)')
+        .select('*')
         .eq('id', id)
         .single();
 
@@ -44,7 +44,23 @@ const JobDetail = () => {
         navigate('/job-board');
         return;
       }
-      setJob(jobData);
+
+      // Safely fetch client details
+      let clientObj = { name: 'Client', full_name: 'Client' };
+      if (jobData.client_id) {
+        try {
+          const { data: cUser } = await supabase
+            .from('users')
+            .select('id, full_name, avatar_url, name, profile_picture_url')
+            .eq('id', jobData.client_id)
+            .maybeSingle();
+          if (cUser) clientObj = cUser;
+        } catch (e) {
+          console.warn('Client profile lookup failed:', e);
+        }
+      }
+
+      setJob({ ...jobData, client: clientObj });
 
       // 2. If lawyer, check verification and existing proposal
       if (user && user.user_type === 'lawyer') {

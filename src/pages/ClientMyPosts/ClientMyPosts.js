@@ -57,16 +57,32 @@ const ClientMyPosts = () => {
       setLoadingProposals(true);
       const { data, error } = await supabase
         .from('job_proposals')
-        .select('*, lawyer:users!lawyer_id(full_name, avatar_url, name, profile_picture_url, email)')
+        .select('*')
         .eq('job_post_id', jobPostId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setProposals(data || []);
+      const rawProposals = data || [];
 
-      // Fetch extra lawyer profile info (specialization, rating, experience)
-      if (data && data.length > 0) {
-        const lawyerIds = data.map(p => p.lawyer_id);
+      // Safely fetch lawyer profiles and users
+      if (rawProposals.length > 0) {
+        const lawyerIds = [...new Set(rawProposals.map(p => p.lawyer_id).filter(Boolean))];
+        
+        let userMap = {};
+        try {
+          const { data: usersData } = await supabase
+            .from('users')
+            .select('id, full_name, avatar_url, name, profile_picture_url, email')
+            .in('id', lawyerIds);
+          if (usersData) {
+            usersData.forEach(u => {
+              userMap[u.id] = u;
+            });
+          }
+        } catch (ue) {
+          console.warn('Could not fetch lawyer user details:', ue);
+        }
+
         const { data: profilesData } = await supabase
           .from('lawyers')
           .select('user_id, specialization, experience_years, verification_status, rating, court_practice, consultation_fee, is_verified')
@@ -79,6 +95,14 @@ const ClientMyPosts = () => {
           });
           setLawyerProfiles(profMap);
         }
+
+        const enrichedProposals = rawProposals.map(prop => ({
+          ...prop,
+          lawyer: userMap[prop.lawyer_id] || { name: 'Lawyer Profile', full_name: 'Lawyer Profile' }
+        }));
+        setProposals(enrichedProposals);
+      } else {
+        setProposals([]);
       }
     } catch (err) {
       console.error('Error fetching proposals:', err);

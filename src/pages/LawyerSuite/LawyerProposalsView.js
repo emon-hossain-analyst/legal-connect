@@ -26,12 +26,47 @@ const LawyerProposalsView = () => {
       setLoading(true);
       const { data, error } = await supabase
         .from('job_proposals')
-        .select('*, job:job_posts!job_post_id(*, client:users!client_id(full_name, avatar_url, name, profile_picture_url))')
+        .select('*')
         .eq('lawyer_id', user.id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setProposals(data || []);
+      const rawProposals = data || [];
+
+      if (rawProposals.length > 0) {
+        const jobIds = [...new Set(rawProposals.map(p => p.job_post_id).filter(Boolean))];
+        let jobMap = {};
+        if (jobIds.length > 0) {
+          const { data: jobsData } = await supabase
+            .from('job_posts')
+            .select('*')
+            .in('id', jobIds);
+          
+          if (jobsData) {
+            const clientIds = [...new Set(jobsData.map(j => j.client_id).filter(Boolean))];
+            let userMap = {};
+            if (clientIds.length > 0) {
+              const { data: usersData } = await supabase
+                .from('users')
+                .select('id, full_name, avatar_url, name, profile_picture_url')
+                .in('id', clientIds);
+              if (usersData) {
+                usersData.forEach(u => { userMap[u.id] = u; });
+              }
+            }
+            jobsData.forEach(j => {
+              jobMap[j.id] = { ...j, client: userMap[j.client_id] || { name: 'Client' } };
+            });
+          }
+        }
+        const enrichedProposals = rawProposals.map(prop => ({
+          ...prop,
+          job: jobMap[prop.job_post_id] || null
+        }));
+        setProposals(enrichedProposals);
+      } else {
+        setProposals([]);
+      }
     } catch (err) {
       console.error('Error fetching proposals:', err);
       toast.error('Failed to load your submitted proposals');
