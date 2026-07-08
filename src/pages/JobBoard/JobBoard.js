@@ -145,7 +145,7 @@ const JobBoard = () => {
       setJobs(enrichedJobs);
     } catch (err) {
       console.error('Error fetching jobs:', err);
-      toast.error('Failed to load job posts');
+      toast.error(`Failed to load job posts: ${err.message || err.details || 'Unknown error'}`);
     } finally {
       setLoading(false);
     }

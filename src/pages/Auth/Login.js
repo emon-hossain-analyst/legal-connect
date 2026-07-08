@@ -63,10 +63,7 @@ const Login = () => {
       });
 
       if (error) {
-        const msg = error.message === 'Invalid login credentials'
-          ? 'Invalid credentials or email not confirmed. If you just registered, please check your email to confirm your account.'
-          : error.message;
-        setErrors((prev) => ({ ...prev, submit: msg }));
+        setErrors((prev) => ({ ...prev, submit: error.message }));
         setLoading(false);
         return;
       }
