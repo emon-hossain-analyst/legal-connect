@@ -16,16 +16,31 @@ const FlaggedReviews = () => {
       setLoading(true);
       const { data, error } = await supabase
         .from('feedback')
-        .select(`
-          *,
-          client:users!feedback_client_id_fkey(name, profile_picture_url),
-          lawyer:users!feedback_lawyer_id_fkey(name)
-        `)
+        .select('*')
         .eq('is_flagged', true)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setReviews(data || []);
+      const rawReviews = data || [];
+
+      let userMap = {};
+      if (rawReviews.length > 0) {
+        const userIds = [...new Set([
+          ...rawReviews.map(r => r.client_id).filter(Boolean),
+          ...rawReviews.map(r => r.lawyer_id).filter(Boolean)
+        ])];
+        if (userIds.length > 0) {
+          const { data: usersData } = await supabase.from('users').select('id, name, full_name, profile_picture_url').in('id', userIds).catch(() => ({ data: [] }));
+          if (usersData) usersData.forEach(u => { userMap[u.id] = u; });
+        }
+      }
+
+      const enrichedReviews = rawReviews.map(rev => ({
+        ...rev,
+        client: userMap[rev.client_id] || { name: 'Client User' },
+        lawyer: userMap[rev.lawyer_id] || { name: 'Lawyer User' }
+      }));
+      setReviews(enrichedReviews);
     } catch (err) {
       console.error('Error fetching reviews:', err);
       setError('Failed to load flagged reviews. Please check your network connection.');

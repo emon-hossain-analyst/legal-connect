@@ -16,26 +16,48 @@ const JobsManagement = () => {
   const fetchJobs = async () => {
     try {
       setLoading(true);
-      let query = supabase
-        .from('jobs')
-        .select(`
-          *,
-          client:users!jobs_client_id_fkey(name, email),
-          department:departments(name, slug)
-        `)
-        .order('created_at', { ascending: false });
+      
+      const [
+        { data: postsData },
+        { data: jobsData },
+        { data: deptsData }
+      ] = await Promise.all([
+        supabase.from('job_posts').select('*').order('created_at', { ascending: false }).catch(() => ({ data: [] })),
+        supabase.from('jobs').select('*').order('created_at', { ascending: false }).catch(() => ({ data: [] })),
+        supabase.from('departments').select('*').catch(() => ({ data: [] }))
+      ]);
+
+      const allJobsRaw = [...(postsData || []), ...(jobsData || [])];
+      const uniqueMap = new Map();
+      allJobsRaw.forEach(j => {
+        if (j.id && !uniqueMap.has(j.id)) uniqueMap.set(j.id, j);
+      });
+
+      let list = Array.from(uniqueMap.values()).sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
       if (statusFilter !== 'All') {
-        query = query.eq('status', statusFilter.toLowerCase());
+        list = list.filter(j => (j.status || '').toLowerCase() === statusFilter.toLowerCase());
       }
 
-      const { data, error } = await query;
+      const clientIds = [...new Set(list.map(j => j.client_id).filter(Boolean))];
+      let userMap = {};
+      if (clientIds.length > 0) {
+        const { data: usersList } = await supabase.from('users').select('id, name, full_name, email').in('id', clientIds).catch(() => ({ data: [] }));
+        if (usersList) usersList.forEach(u => { userMap[u.id] = u; });
+      }
 
-      if (error) throw error;
-      setJobs(data || []);
+      const deptMap = {};
+      if (deptsData) deptsData.forEach(d => { deptMap[d.id] = d; });
+
+      const enrichedList = list.map(job => ({
+        ...job,
+        client: userMap[job.client_id] || { name: 'Client User', email: '' },
+        department: deptMap[job.department_id] || { name: job.category || 'General Legal' }
+      }));
+
+      setJobs(enrichedList);
     } catch (err) {
       console.error('Error fetching jobs:', err);
-      setError('Failed to load jobs. Please check your network connection.');
       toast.error('Failed to load jobs');
     } finally {
       setLoading(false);

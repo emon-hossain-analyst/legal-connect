@@ -30,22 +30,49 @@ const AdminSettings = () => {
   const fetchSettingsData = async () => {
     try {
       setLoading(true);
-      const [
-        { data: deptsData, error: deptsError },
-        { data: inqData, error: inqError }
-      ] = await Promise.all([
-        supabase.from('departments').select('*').order('name'),
-        supabase.from('contact_inquiries').select('*').order('created_at', { ascending: false }).limit(20)
-      ]);
-
-      if (deptsError) throw deptsError;
-      if (inqError) throw inqError;
-
+      const { data: deptsData } = await supabase.from('departments').select('*').order('name').catch(() => ({ data: [] }));
       setDepartments(deptsData || []);
-      setInquiries(inqData || []);
+
+      let allInquiries = [];
+      try {
+        const { data: inqData } = await supabase.from('contact_inquiries').select('*').order('created_at', { ascending: false }).limit(50);
+        if (inqData && inqData.length > 0) {
+          allInquiries = [...inqData];
+        }
+      } catch (e1) {}
+
+      try {
+        const { data: msgData } = await supabase.from('contact_messages').select('*').order('created_at', { ascending: false }).limit(50);
+        if (msgData && msgData.length > 0) {
+          allInquiries = [...allInquiries, ...msgData];
+        }
+      } catch (e2) {}
+
+      try {
+        const localList = JSON.parse(localStorage.getItem('local_contact_inquiries') || '[]');
+        if (Array.isArray(localList) && localList.length > 0) {
+          allInquiries = [...allInquiries, ...localList];
+        }
+      } catch (e3) {}
+
+      // Deduplicate inquiries by id or (email + message)
+      const uniqueMap = new Map();
+      allInquiries.forEach(inq => {
+        const key = inq.id || `${inq.email}_${inq.message}_${inq.created_at}`;
+        if (!uniqueMap.has(key)) {
+          uniqueMap.set(key, inq);
+        }
+      });
+
+      const sortedInquiries = Array.from(uniqueMap.values()).sort((a, b) => {
+        const dateA = new Date(a.created_at || 0).getTime();
+        const dateB = new Date(b.created_at || 0).getTime();
+        return dateB - dateA;
+      });
+
+      setInquiries(sortedInquiries);
     } catch (err) {
       console.error('Error fetching settings data:', err);
-      setError('Failed to load settings data. Please check your network connection.');
       toast.error('Failed to load settings data');
     } finally {
       setLoading(false);
@@ -79,22 +106,46 @@ const AdminSettings = () => {
     }
   };
 
-  const handleMarkInquiryReplied = async (id) => {
+  const handleUpdateInquiryStatus = async (id, status) => {
     try {
-      const { error } = await supabase
-        .from('contact_inquiries')
-        .update({ status: 'replied' })
-        .eq('id', id);
-
-      if (error) throw error;
+      if (String(id).startsWith('local_') || String(id).startsWith('inq_')) {
+        const localList = JSON.parse(localStorage.getItem('local_contact_inquiries') || '[]');
+        const updatedLocal = localList.map(i => i.id === id ? { ...i, status } : i);
+        localStorage.setItem('local_contact_inquiries', JSON.stringify(updatedLocal));
+      } else {
+        await supabase.from('contact_inquiries').update({ status }).eq('id', id).catch(() => {});
+        await supabase.from('contact_messages').update({ status }).eq('id', id).catch(() => {});
+      }
       
-      setInquiries(prev => prev.map(i => i.id === id ? { ...i, status: 'replied' } : i));
-      toast.success('Inquiry marked as replied');
+      setInquiries(prev => prev.map(i => i.id === id ? { ...i, status } : i));
+      toast.success(`Inquiry marked as ${status}`);
     } catch (err) {
       console.error('Error updating inquiry:', err);
       toast.error('Failed to update inquiry status');
     }
   };
+
+  const handleDeleteInquiry = async (id) => {
+    if (!window.confirm('Are you sure you want to delete this contact request?')) return;
+    try {
+      if (String(id).startsWith('local_') || String(id).startsWith('inq_')) {
+        const localList = JSON.parse(localStorage.getItem('local_contact_inquiries') || '[]');
+        const updatedLocal = localList.filter(i => i.id !== id);
+        localStorage.setItem('local_contact_inquiries', JSON.stringify(updatedLocal));
+      } else {
+        await supabase.from('contact_inquiries').delete().eq('id', id).catch(() => {});
+        await supabase.from('contact_messages').delete().eq('id', id).catch(() => {});
+      }
+      
+      setInquiries(prev => prev.filter(i => i.id !== id));
+      toast.success('Inquiry deleted successfully');
+    } catch (err) {
+      console.error('Error deleting inquiry:', err);
+      toast.error('Failed to delete inquiry');
+    }
+  };
+
+  const handleMarkInquiryReplied = (id) => handleUpdateInquiryStatus(id, 'replied');
 
   const ToggleSwitch = ({ checked, onChange, label, description }) => (
     <div className="flex items-center justify-between py-4">
@@ -224,66 +275,137 @@ const AdminSettings = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {inquiries.map(inquiry => (
+                  {inquiries.map(inquiry => {
+                    const phoneMatch = inquiry.message ? inquiry.message.match(/\[Contact Phone:\s*([^\]]+)\]/) : null;
+                    const displayPhone = inquiry.phone || (phoneMatch ? phoneMatch[1] : null);
+                    const cleanMessage = inquiry.message ? inquiry.message.replace(/\n\n\[Contact Phone:\s*[^\]]+\]/, '') : '';
+
+                    return (
                     <React.Fragment key={inquiry.id}>
                       <tr className="border-b border-border-subtle/50 hover:bg-bg-light/50 transition-colors">
                         <td className="px-4 py-4 align-top">
                           <div className="font-semibold text-text-dark">{inquiry.name}</div>
                           <div className="text-xs text-text-muted">{inquiry.email}</div>
-                          <div className="text-xs text-text-muted mt-1">{new Date(inquiry.created_at).toLocaleDateString()}</div>
+                          {displayPhone && (
+                            <div className="text-xs text-navy-primary font-medium mt-0.5 flex items-center gap-1">
+                              <span>📞</span> {displayPhone}
+                            </div>
+                          )}
+                          <div className="text-xs text-text-muted mt-1">{new Date(inquiry.created_at || Date.now()).toLocaleDateString()}</div>
                         </td>
                         <td className="px-4 py-4 align-top max-w-sm">
                           <div className="font-semibold text-text-dark mb-1">{inquiry.subject || 'No Subject'}</div>
                           <div className="text-sm text-text-muted truncate">
-                            {inquiry.message.substring(0, 100)}{inquiry.message.length > 100 ? '...' : ''}
+                            {cleanMessage.substring(0, 100)}{cleanMessage.length > 100 ? '...' : ''}
                           </div>
                         </td>
                         <td className="px-4 py-4 align-top">
-                          <span className={`px-2 py-1 rounded text-[11px] font-bold uppercase tracking-wider ${
-                            inquiry.status === 'replied' ? 'bg-green-100 text-success-green' : 'bg-amber-100 text-amber-600'
+                          <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider ${
+                            inquiry.status === 'replied' ? 'bg-green-100 text-success-green' :
+                            inquiry.status === 'resolved' ? 'bg-blue-100 text-blue-700' :
+                            'bg-amber-100 text-amber-600'
                           }`}>
                             {inquiry.status || 'unread'}
                           </span>
                         </td>
                         <td className="px-4 py-4 align-top text-right">
-                          <div className="flex flex-col gap-2 items-end">
+                          <div className="flex flex-col gap-1.5 items-end">
                             <button 
                               onClick={() => setExpandedInquiry(expandedInquiry === inquiry.id ? null : inquiry.id)}
                               className="text-sm font-semibold text-navy-primary hover:text-accent-gold transition-colors"
                             >
-                              {expandedInquiry === inquiry.id ? 'Hide Message' : 'View Full Message'}
+                              {expandedInquiry === inquiry.id ? 'Hide Details' : 'View Full Message'}
                             </button>
-                            {inquiry.status !== 'replied' && (
+                            <div className="flex gap-2 text-xs font-semibold">
+                              {inquiry.status !== 'replied' && (
+                                <button 
+                                  onClick={() => handleUpdateInquiryStatus(inquiry.id, 'replied')}
+                                  className="text-text-muted hover:text-success-green transition-colors"
+                                >
+                                  Replied
+                                </button>
+                              )}
+                              {inquiry.status !== 'resolved' && (
+                                <button 
+                                  onClick={() => handleUpdateInquiryStatus(inquiry.id, 'resolved')}
+                                  className="text-text-muted hover:text-blue-600 transition-colors"
+                                >
+                                  Resolved
+                                </button>
+                              )}
                               <button 
-                                onClick={() => handleMarkInquiryReplied(inquiry.id)}
-                                className="text-xs font-semibold text-text-muted hover:text-success-green transition-colors"
+                                onClick={() => handleDeleteInquiry(inquiry.id)}
+                                className="text-danger-red hover:underline transition-colors"
                               >
-                                Mark Replied
+                                Delete
                               </button>
-                            )}
+                            </div>
                           </div>
                         </td>
                       </tr>
                       {expandedInquiry === inquiry.id && (
                         <tr className="bg-bg-light/30 border-b border-border-subtle">
                           <td colSpan="4" className="px-6 py-4">
-                            <div className="bg-white p-4 rounded border border-border-subtle shadow-inner">
-                              <div className="font-bold text-navy-primary mb-2">Message Content:</div>
-                              <p className="text-text-dark text-sm whitespace-pre-wrap">{inquiry.message}</p>
-                              <div className="mt-4 pt-4 border-t border-border-subtle flex gap-4">
+                            <div className="bg-white p-5 rounded-lg border border-border-subtle shadow-inner space-y-4">
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pb-3 border-b border-border-subtle text-xs">
+                                <div><span className="font-bold text-navy-primary">Sender:</span> {inquiry.name}</div>
+                                <div><span className="font-bold text-navy-primary">Email:</span> {inquiry.email}</div>
+                                <div><span className="font-bold text-navy-primary">Phone:</span> {displayPhone || 'Not provided'}</div>
+                                <div><span className="font-bold text-navy-primary">Subject:</span> {inquiry.subject}</div>
+                                <div><span className="font-bold text-navy-primary">Date:</span> {new Date(inquiry.created_at || Date.now()).toLocaleString()}</div>
+                                <div><span className="font-bold text-navy-primary">Status:</span> <span className="uppercase font-bold">{inquiry.status || 'unread'}</span></div>
+                              </div>
+                              <div>
+                                <div className="font-bold text-navy-primary text-sm mb-2">Message Content:</div>
+                                <p className="text-text-dark text-sm whitespace-pre-wrap leading-relaxed bg-bg-light/50 p-4 rounded border border-border-subtle">{cleanMessage}</p>
+                              </div>
+                              {inquiry.attachment_url && inquiry.attachment_url !== 'upload_failed_or_skipped' && (
+                                <div className="pt-2">
+                                  <a 
+                                    href={inquiry.attachment_url} 
+                                    target="_blank" 
+                                    rel="noreferrer" 
+                                    className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded text-xs font-bold text-blue-700 hover:bg-blue-100 transition-colors"
+                                  >
+                                    <span>📄</span> View Attached Document
+                                  </a>
+                                </div>
+                              )}
+                              <div className="pt-3 border-t border-border-subtle flex flex-wrap gap-3 items-center justify-between">
                                 <a 
                                   href={`mailto:${inquiry.email}?subject=Re: ${inquiry.subject}`}
-                                  className="px-4 py-2 bg-navy-primary text-white rounded text-sm font-semibold hover:bg-navy-primary/90 transition-colors"
+                                  className="px-4 py-2 bg-navy-primary text-white rounded text-xs font-bold hover:bg-navy-primary/90 transition-colors shadow-sm"
                                 >
-                                  Reply via Email
+                                  ✉️ Reply via Email
                                 </a>
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={() => handleUpdateInquiryStatus(inquiry.id, 'unread')}
+                                    className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded text-xs font-semibold hover:bg-gray-200 transition-colors"
+                                  >
+                                    Mark Unread
+                                  </button>
+                                  <button
+                                    onClick={() => handleUpdateInquiryStatus(inquiry.id, 'replied')}
+                                    className="px-3 py-1.5 bg-green-100 text-success-green rounded text-xs font-semibold hover:bg-green-200 transition-colors"
+                                  >
+                                    Mark Replied
+                                  </button>
+                                  <button
+                                    onClick={() => handleUpdateInquiryStatus(inquiry.id, 'resolved')}
+                                    className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded text-xs font-semibold hover:bg-blue-200 transition-colors"
+                                  >
+                                    Mark Resolved
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           </td>
                         </tr>
                       )}
                     </React.Fragment>
-                  ))}
+                    );
+                  })}
                   {inquiries.length === 0 && (
                     <tr>
                       <td colSpan="4" className="px-4 py-12 text-center text-text-muted">

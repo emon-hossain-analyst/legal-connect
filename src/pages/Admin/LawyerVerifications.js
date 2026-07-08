@@ -28,13 +28,28 @@ const LawyerVerifications = () => {
       setLoading(true);
       const { data, error } = await supabase
         .from('lawyers')
-        .select(`
-          *,
-          user:users ( name, email, phone, profile_picture_url )
-        `)
+        .select('*')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
+      const rawLawyers = data || [];
+
+      let userMap = {};
+      if (rawLawyers.length > 0) {
+        const userIds = [...new Set(rawLawyers.map(l => l.user_id).filter(Boolean))];
+        if (userIds.length > 0) {
+          const { data: usersData } = await supabase
+            .from('users')
+            .select('id, name, full_name, email, phone, profile_picture_url')
+            .in('id', userIds)
+            .catch(() => ({ data: [] }));
+          if (usersData) usersData.forEach(u => { userMap[u.id] = u; });
+        }
+      }
+
+      data.forEach(l => {
+        l.user = userMap[l.user_id] || { name: 'Lawyer Applicant', email: '' };
+      });
 
       // Fetch lawyer_profiles for full details (bio, experience, bar council id, rates)
       const { data: profilesData } = await supabase
