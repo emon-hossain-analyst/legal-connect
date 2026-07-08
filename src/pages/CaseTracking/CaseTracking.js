@@ -32,8 +32,7 @@ const CaseTracking = ({ inline = false }) => {
     const fetchCases = async () => {
       if (!user) return;
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const currentUserId = session?.user?.id || user?.id;
+        const currentUserId = user?.id;
         if (!currentUserId) {
           setCases([]);
           setLoading(false);

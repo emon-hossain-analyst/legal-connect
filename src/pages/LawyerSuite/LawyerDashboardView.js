@@ -21,8 +21,7 @@ const LawyerDashboardView = () => {
   const fetchDashboardData = useCallback(async () => {
     if (!user) return;
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      let userIds = [...new Set([session?.user?.id, user?.id, user?.auth_id].filter(Boolean))];
+      let userIds = [...new Set([user?.id, user?.auth_id].filter(Boolean))];
       if (userIds.length === 0) return;
 
       try {

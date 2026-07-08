@@ -30,8 +30,7 @@ const ClientSettings = ({ inline = false }) => {
         return;
       }
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const currentUserId = session?.user?.id || user.id;
+        const currentUserId = user.id;
 
         // Fetch user data from Supabase users table
         const { data: userData, error } = await supabase
@@ -85,8 +84,7 @@ const ClientSettings = ({ inline = false }) => {
     if (!user) return;
     setSaving(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const currentUserId = session?.user?.id || user.id;
+      const currentUserId = user.id;
 
       const { error } = await supabase
         .from('users')

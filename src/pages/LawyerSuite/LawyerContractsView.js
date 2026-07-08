@@ -39,8 +39,7 @@ const LawyerContractsView = () => {
   const fetchContracts = async () => {
     try {
       setLoading(true);
-      const { data: { session } } = await supabase.auth.getSession();
-      const userIds = [...new Set([session?.user?.id, user?.id, user?.auth_id].filter(Boolean))];
+      let userIds = [...new Set([user?.id, user?.auth_id].filter(Boolean))];
       if (userIds.length === 0) {
         setContracts([]);
         setLoading(false);

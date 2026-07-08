@@ -10,36 +10,28 @@ const Login = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const redirect = searchParams.get('redirect');
-  const { setUser } = useAuth();
+  const { user, loading: authLoading, setUser } = useAuth();
   const [formData, setFormData] = useState({ email: '', password: '' });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
-    // Only clear legacy tokens if no active Supabase session exists
-    const checkExistingSession = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          // User is already logged in — redirect to appropriate dashboard
-          const { data: publicUser } = await supabase.from('users').select('user_type, role').eq('auth_id', session.user.id).maybeSingle();
-          const role = publicUser?.user_type || publicUser?.role || session.user.user_metadata?.role || 'client';
-          let target = '/client/dashboard';
-          if (role === 'lawyer') target = '/lawyer-suite/dashboard';
-          else if (role === 'admin') target = '/admin';
-          navigate(redirect || target, { replace: true });
-          return;
-        }
-      } catch (e) {
-        // Session check failed — proceed to login form
+    if (!authLoading) {
+      if (user) {
+        // User is already logged in — redirect to appropriate dashboard
+        const role = user.user_type || user.role || 'client';
+        let target = '/client/dashboard';
+        if (role === 'lawyer') target = '/lawyer-suite/dashboard';
+        else if (role === 'admin') target = '/admin';
+        navigate(redirect || target, { replace: true });
+      } else {
+        // No active session — safe to clear legacy tokens
+        localStorage.removeItem('token');
+        localStorage.removeItem('userType');
       }
-      // No active session — safe to clear legacy tokens
-      localStorage.removeItem('token');
-      localStorage.removeItem('userType');
-    };
-    checkExistingSession();
-  }, [navigate, redirect]);
+    }
+  }, [user, authLoading, navigate, redirect]);
 
   const validate = () => {
     const e = {};
@@ -116,12 +108,17 @@ const Login = () => {
           targetDashboard = '/admin';
         }
 
-        navigate(redirect || targetDashboard, { replace: true });
+        // Slight delay to ensure context propagates before router unmounts
+        setTimeout(() => {
+          navigate(redirect || targetDashboard, { replace: true });
+        }, 50);
+      } else {
+        // No session returned (e.g., email not confirmed)
+        setLoading(false);
       }
     } catch (err) {
       console.error('Login error:', err);
       setErrors((prev) => ({ ...prev, submit: err?.message || 'Login failed.' }));
-    } finally {
       setLoading(false);
     }
   };

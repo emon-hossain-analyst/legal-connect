@@ -148,8 +148,8 @@ const ClientCommunicationPortal = ({ inline = false }) => {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const { data: { user: authUser }, error: authErr } = await supabase.auth.getUser();
-      if (authErr || !authUser) return [];
+      const authUser = user;
+      if (!authUser) return [];
 
       // 1. Fetch from conversations table with fallback
       let conversations = [];
@@ -288,7 +288,7 @@ const ClientCommunicationPortal = ({ inline = false }) => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     let isMounted = true;
@@ -298,9 +298,8 @@ const ClientCommunicationPortal = ({ inline = false }) => {
 
       setLoading(true);
       try {
-        const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
-        if (authError || !authUser) {
-          console.error('[Auth Error] User session missing or unresolvable:', authError);
+        const authUser = user;
+        if (!authUser) {
           if (isMounted) setLoading(false);
           return;
         }
@@ -455,10 +454,11 @@ const ClientCommunicationPortal = ({ inline = false }) => {
       }
     };
 
-    initializeMessagingPipeline();
+    if (user) {
+      initializeMessagingPipeline();
+    }
     return () => { isMounted = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchData]);
+  }, [searchParams, fetchData, user]);
 
   useEffect(() => {
     if (!user) return;

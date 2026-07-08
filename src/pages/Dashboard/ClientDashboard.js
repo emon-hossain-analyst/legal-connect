@@ -114,8 +114,7 @@ const ClientDashboard = ({ inline = false }) => {
       }
 
       // 3. Auth Verification & Fetch Dashboard Stats
-      const { data: { session } } = await supabase.auth.getSession();
-      const userIds = [...new Set([session?.user?.id, user?.id, user?.auth_id, authId, publicUserId].filter(Boolean))];
+      const userIds = [...new Set([user?.id, user?.auth_id, authId, publicUserId].filter(Boolean))];
 
       // Fetch Appointments with lawyer data (Fix 1)
       let aptsData = [];

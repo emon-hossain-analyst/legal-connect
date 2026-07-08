@@ -57,8 +57,7 @@ const LawyerCasesView = () => {
   const fetchCasesData = async () => {
     try {
       setLoading(true);
-      const { data: { session } } = await supabase.auth.getSession();
-      const rawUserIds = [...new Set([session?.user?.id, user?.id, user?.auth_id].filter(Boolean))];
+      const rawUserIds = [...new Set([user?.id, user?.auth_id].filter(Boolean))];
       if (rawUserIds.length === 0) {
         setCases([]);
         setDocuments([]);

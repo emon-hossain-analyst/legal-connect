@@ -45,8 +45,7 @@ const AppointmentBooking = ({ inline = false }) => {
     if (!user) return;
     setLoadingData(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      let userIds = [...new Set([session?.user?.id, user?.id, user?.auth_id].filter(Boolean))];
+      let userIds = [...new Set([user?.id, user?.auth_id].filter(Boolean))];
       if (userIds.length === 0) {
         setLoadingData(false);
         return;
@@ -303,8 +302,7 @@ const AppointmentBooking = ({ inline = false }) => {
 
     setSubmitting(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      let clientIdToUse = session?.user?.id || user?.id;
+      let clientIdToUse = user?.id;
       try {
         const { data: uRes } = await supabase.from('users').select('id').or(`auth_id.eq.${clientIdToUse},id.eq.${clientIdToUse}`).maybeSingle();
         if (uRes?.id) clientIdToUse = uRes.id;

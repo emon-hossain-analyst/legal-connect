@@ -27,8 +27,7 @@ const LawyerBillingView = () => {
   const fetchBillingData = async () => {
     try {
       setLoading(true);
-      const { data: { session } } = await supabase.auth.getSession();
-      const currentUserId = session?.user?.id || user?.id;
+      const currentUserId = user?.id;
       if (!currentUserId) {
         setTransactions([]);
         setStats({ total_earnings: 0, pending: 0, platform_fee: 0 });

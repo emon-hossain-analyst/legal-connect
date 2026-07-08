@@ -123,7 +123,6 @@ const DocUpload = ({ lawyerUserId, contractId, isLoggedIn }) => {
       if (uploadError) throw uploadError;
 
       // Insert a document record
-      const { data: { user } } = await supabase.auth.getUser();
       await supabase.from('documents').insert([{
         client_id: user.id,
         lawyer_id: lawyerUserId,

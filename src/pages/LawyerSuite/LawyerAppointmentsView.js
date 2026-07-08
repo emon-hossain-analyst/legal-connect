@@ -41,8 +41,7 @@ const LawyerAppointmentsView = () => {
     try {
       setLoading(true);
       // 1. Auth Verification & ID Collection
-      const { data: { session } } = await supabase.auth.getSession();
-      const rawUserIds = [...new Set([session?.user?.id, user?.id, user?.auth_id].filter(Boolean))];
+      let rawUserIds = [...new Set([user?.id, user?.auth_id].filter(Boolean))];
       if (rawUserIds.length === 0) {
         setAppointments([]);
         setLoading(false);
