@@ -1,66 +1,112 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import styles from './Header.module.css';
+import { useAuth } from '../../context/AuthContext';
+import NotificationBell from '../NotificationBell/NotificationBell';
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const navigate = useNavigate();
-  const isAuthenticated = localStorage.getItem('token'); // Simple auth check
-  const userType = localStorage.getItem('userType'); // 'client' or 'lawyer'
+  const { user, isAuthenticated, logout } = useAuth();
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('userType');
-    localStorage.removeItem('userId');
+  const handleLogout = async () => {
+    await logout();
     navigate('/');
   };
 
-  return (
-    <header className={styles.header}>
-      <div className={styles.container}>
-        <Link to="/" className={styles.logo}>
-          <img src="/logo.svg" alt="LegalConnect" className={styles.logoImage} />
-        </Link>
-        
-        <button 
-          className={styles.menuToggle}
-          onClick={() => setIsMenuOpen(!isMenuOpen)}
-          aria-label="Toggle menu"
-        >
-          <span></span>
-          <span></span>
-          <span></span>
-        </button>
+  const close = () => setIsMenuOpen(false);
 
-        <nav className={`${styles.nav} ${isMenuOpen ? styles.navOpen : ''}`}>
-          <Link to="/" onClick={() => setIsMenuOpen(false)}>Home</Link>
-          <Link to="/lawyers" onClick={() => setIsMenuOpen(false)}>Find Lawyers</Link>
-          <Link to="/cases" onClick={() => setIsMenuOpen(false)}>Case Tracking</Link>
-          <Link to="/legal-updates" onClick={() => setIsMenuOpen(false)}>Legal Updates</Link>
-          <Link to="/feedback" onClick={() => setIsMenuOpen(false)}>Feedback</Link>
-          <Link to="/contact" onClick={() => setIsMenuOpen(false)}>Contact</Link>
+  const userRole = user?.user_type || user?.role || user?.user_metadata?.role || user?.user_metadata?.user_type || 'client';
+  const userName = user?.name || user?.full_name || user?.user_metadata?.name || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User';
+  const firstName = userName.split(' ')[0];
+  const initials = userName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'U';
+  const avatarUrl = user?.profile_picture_url || user?.avatar_url || user?.user_metadata?.avatar_url || user?.user_metadata?.profile_picture_url;
+  const dashboardPath = userRole === 'lawyer' ? '/lawyer-suite/dashboard' : userRole === 'admin' ? '/admin' : '/client/dashboard';
+
+  return (
+    <header className="w-full top-0 sticky z-50 bg-surface-container-lowest border-b border-outline-variant shadow-sm font-body-md">
+      <div className="flex justify-between items-center w-full px-6 py-3 max-w-container-max mx-auto">
+        <div className="flex items-center gap-8">
+          <Link to="/" className="flex items-center" onClick={close}>
+            <img src="/logo.svg" alt="LegalConnect" className="h-10 w-auto" />
+          </Link>
           
+          {/* Desktop Nav */}
+          <nav className="hidden md:flex gap-6 items-center">
+            <Link to="/lawyers" className="text-on-surface-variant hover:text-primary transition-colors duration-200 font-body-md text-body-md">Find Lawyers</Link>
+            <Link to="/jobs" className="text-on-surface-variant hover:text-primary transition-colors duration-200 font-body-md text-body-md">Job Board</Link>
+            <Link to="/legal-updates" className="text-on-surface-variant hover:text-primary transition-colors duration-200 font-body-md text-body-md">Updates</Link>
+            <Link to="/contact" className="text-on-surface-variant hover:text-primary transition-colors duration-200 font-body-md text-body-md">Contact</Link>
+            <Link to="/ai-advisor" className="text-on-surface-variant hover:text-primary transition-colors duration-200 font-body-md text-body-md font-semibold flex items-center gap-1"><span className="material-symbols-outlined text-[18px]">smart_toy</span> AI Advisor</Link>
+          </nav>
+        </div>
+
+        <div className="flex items-center gap-4">
           {isAuthenticated ? (
             <>
-              {userType === 'client' ? (
-                <Link to="/client/dashboard" onClick={() => setIsMenuOpen(false)}>Dashboard</Link>
-              ) : (
-                <Link to="/lawyer/dashboard" onClick={() => setIsMenuOpen(false)}>Dashboard</Link>
-              )}
-              <button onClick={handleLogout} className={styles.logoutBtn}>Logout</button>
+              <NotificationBell />
+              <Link to={dashboardPath} className="hidden md:block text-primary font-bold hover:underline">Dashboard</Link>
+              <div className="flex items-center gap-2">
+                <span className="hidden md:inline font-semibold text-on-surface text-sm">
+                  {firstName}
+                </span>
+                <div className="w-8 h-8 rounded-full overflow-hidden border border-outline-variant bg-surface-container-high flex items-center justify-center text-primary font-bold cursor-pointer relative group shadow-sm">
+                   {avatarUrl ? (
+                     <img src={avatarUrl} alt={userName} className="w-full h-full object-cover" />
+                   ) : (
+                     <span>{initials}</span>
+                   )}
+                   <div className="absolute top-full right-0 mt-2 bg-white border border-outline-variant rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all w-32 py-2 z-50">
+                      <button onClick={handleLogout} className="w-full text-left px-4 py-2 text-sm hover:bg-surface-container text-error font-semibold">Logout</button>
+                   </div>
+                </div>
+              </div>
             </>
           ) : (
-            <>
-              <Link to="/login" onClick={() => setIsMenuOpen(false)}>Login</Link>
-              <Link to="/register" onClick={() => setIsMenuOpen(false)} className={styles.registerBtn}>Register</Link>
-            </>
+            <div className="hidden md:flex items-center gap-4">
+              <Link to="/login" className="text-primary font-bold">Login</Link>
+              <Link to="/register" className="bg-primary text-white px-4 py-2 rounded font-bold hover:bg-primary/90 transition-colors">Register</Link>
+            </div>
           )}
-        </nav>
+
+          {/* Mobile Menu Toggle */}
+          <button 
+            className="md:hidden material-symbols-outlined text-on-surface-variant cursor-pointer active:scale-95"
+            onClick={() => setIsMenuOpen(!isMenuOpen)}
+          >
+            {isMenuOpen ? 'close' : 'menu'}
+          </button>
+        </div>
       </div>
+
+      {/* Mobile Nav */}
+      {isMenuOpen && (
+        <nav className="md:hidden bg-surface-container-lowest border-t border-outline-variant p-4 flex flex-col gap-4 shadow-lg absolute w-full left-0">
+            <Link to="/lawyers" onClick={close} className="text-on-surface-variant hover:text-primary">Find Lawyers</Link>
+            <Link to="/jobs" onClick={close} className="text-on-surface-variant hover:text-primary">Job Board</Link>
+            <Link to="/legal-updates" onClick={close} className="text-on-surface-variant hover:text-primary">Legal Updates</Link>
+            <Link to="/contact" onClick={close} className="text-on-surface-variant hover:text-primary">Contact</Link>
+            <Link to="/ai-advisor" onClick={close} className="text-on-surface-variant hover:text-primary font-semibold flex items-center gap-1"><span className="material-symbols-outlined text-[18px]">smart_toy</span> AI Advisor</Link>
+            {isAuthenticated ? (
+               <>
+                <Link to={dashboardPath} onClick={close} className="text-primary font-bold">Dashboard</Link>
+                <div className="flex items-center gap-2 py-1 text-on-surface font-semibold">
+                   <div className="w-6 h-6 rounded-full overflow-hidden bg-surface-container-high flex items-center justify-center text-xs text-primary font-bold">
+                     {avatarUrl ? <img src={avatarUrl} alt={userName} className="w-full h-full object-cover" /> : initials}
+                   </div>
+                   <span>{userName}</span>
+                </div>
+                <button onClick={handleLogout} className="text-left text-error font-bold">Logout</button>
+               </>
+            ) : (
+              <div className="flex flex-col gap-2 mt-2 pt-2 border-t border-outline-variant">
+                <Link to="/login" onClick={close} className="text-primary font-bold py-2">Login</Link>
+                <Link to="/register" onClick={close} className="bg-primary text-white px-4 py-2 rounded text-center font-bold">Register</Link>
+              </div>
+            )}
+        </nav>
+      )}
     </header>
   );
 };
 
 export default Header;
-
-

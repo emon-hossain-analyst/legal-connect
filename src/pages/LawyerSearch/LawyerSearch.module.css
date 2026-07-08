@@ -135,6 +135,90 @@
   color: #6B7280;
 }
 
+/* ─── Department filter chips ─────────────────────────────────────────── */
+.deptChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.deptChip {
+  padding: 0.4rem 1rem;
+  border: 1px solid rgba(15, 42, 94, 0.15);
+  border-radius: 999px;
+  background: #FAFBFC;
+  color: #1A1F2E;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.deptChip:hover {
+  background: #EFF6FF;
+  border-color: #0F2A5E;
+}
+
+.deptChipActive {
+  background: #0F2A5E;
+  color: white;
+  border-color: #0F2A5E;
+}
+
+.clearChip {
+  padding: 0.4rem 1rem;
+  border: 1px solid #DC2626;
+  border-radius: 999px;
+  background: #FEF2F2;
+  color: #DC2626;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.clearChip:hover {
+  background: #DC2626;
+  color: white;
+}
+
+/* ─── Pagination ──────────────────────────────────────────────────────── */
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1.5rem;
+  margin-top: 2.5rem;
+  padding: 1rem 0;
+}
+
+.pageBtn {
+  padding: 0.6rem 1.5rem;
+  border: 1px solid rgba(15, 42, 94, 0.15);
+  border-radius: 6px;
+  background: white;
+  color: #0F2A5E;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.pageBtn:hover:not(:disabled) {
+  background: #0F2A5E;
+  color: white;
+}
+
+.pageBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pageInfo {
+  color: #6B7280;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
 @media (max-width: 768px) {
   .lawyerSearch {
     padding: 1rem;
@@ -148,5 +232,3 @@
     grid-template-columns: 1fr;
   }
 }
-
-

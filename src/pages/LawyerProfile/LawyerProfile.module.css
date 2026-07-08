@@ -3,84 +3,169 @@
   background-color: #F5F6FA;
 }
 
-.profileLayout {
-  display: flex;
-}
+.profileLayout { display: flex; }
 
 .profileContent {
   flex: 1;
-  padding: 20px;
-}
-
-.profileHeader {
-  margin-bottom: 20px;
+  padding: 2rem;
 }
 
 .profileTitle {
   font-size: 2rem;
   color: #1A1F2E;
-  margin: 0;
+  margin: 0 0 1.5rem;
 }
 
-.section {
-  margin-bottom: 20px;
-}
+.section { margin-bottom: 1.5rem; }
 
 .profileDetails {
   display: flex;
-  align-items: center;
-  margin-bottom: 20px;
+  gap: 1.5rem;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
 }
 
-.profileImage img {
-  width: 120px;
-  height: 120px;
+.avatarWrap { flex-shrink: 0; }
+
+.avatar {
+  width: 110px;
+  height: 110px;
   border-radius: 50%;
   object-fit: cover;
-  margin-right: 20px;
+}
+
+.avatarFallback {
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  background: #0F2A5E;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.5rem;
+  font-weight: 700;
+}
+
+.profileInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
 }
 
 .profileInfo h2 {
-  margin: 0 0 10px 0;
+  margin: 0;
   font-size: 1.5rem;
   color: #1A1F2E;
 }
 
-.specialization {
-  font-weight: bold;
-  color: #0F2A5E;
-  margin: 5px 0;
+.specialization { font-weight: 600; color: #0F2A5E; margin: 0; }
+.location, .experience, .rate { margin: 0; color: #6B7280; font-size: 0.9rem; }
+
+.ratingRow {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
 }
 
-.location,
-.experience,
-.contact {
-  margin: 5px 0;
-  color: #6B7280;
+.stars { display: flex; gap: 1px; }
+.starFilled { color: #C8920A; font-size: 1rem; }
+.starEmpty  { color: #D1D5DB; font-size: 1rem; }
+
+.ratingNum  { font-weight: 700; color: #1A1F2E; font-size: 0.95rem; }
+.ratingCount { color: #6B7280; font-size: 0.85rem; }
+
+.verifiedBadge {
+  display: inline-block;
+  background: #F0FDF4;
+  color: #1E6B4A;
+  border-radius: 999px;
+  padding: 0.2rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-top: 0.25rem;
+  width: fit-content;
 }
 
-.bioSection,
-.qualificationsSection {
-  margin-top: 20px;
+.bioSection, .deptSection {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid rgba(15,42,94,0.08);
 }
 
-.bioSection h3,
-.qualificationsSection h3 {
-  margin-bottom: 10px;
+.bioSection h3, .deptSection h3 {
+  margin: 0 0 0.6rem;
+  font-size: 1rem;
   color: #1A1F2E;
 }
 
-.bioSection p,
-.qualificationsSection p {
-  line-height: 1.6;
-  color: #6B7280;
+.bioSection p {
+  margin: 0;
+  color: #374151;
+  line-height: 1.7;
+  font-size: 0.9rem;
 }
 
-.loading {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 100vh;
-  font-size: 1.2rem;
-  color: #6B7280;
+.deptTags { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+.deptTag {
+  background: #EFF6FF;
+  color: #0F2A5E;
+  border-radius: 999px;
+  padding: 0.25rem 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 500;
 }
+
+@media (max-width: 600px) {
+  .profileDetails { flex-direction: column; }
+  .profileContent { padding: 1rem; }
+}
+
+/* ── Public profile page ── */
+.publicPage {
+  min-height: calc(100vh - 160px);
+  padding: 2rem;
+  background: #F5F6FA;
+}
+
+.publicContainer {
+  max-width: 780px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.publicCard {
+  background: white;
+  border-radius: 8px;
+  padding: 2rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+}
+
+.publicName {
+  margin: 0;
+  font-size: 1.6rem;
+  color: #1A1F2E;
+}
+
+.publicActions {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid rgba(15,42,94,0.08);
+}
+
+.bookBtn {
+  background: #0F2A5E;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 0.7rem 2rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.bookBtn:hover { background: #0E7490; }

@@ -8,8 +8,7 @@ const Sidebar = ({ userType }) => {
   const clientLinks = [
     { path: '/client/dashboard', label: 'Dashboard', icon: '📊' },
     { path: '/lawyers', label: 'Find Lawyers', icon: '🔍' },
-    { path: '/documents/upload', label: 'Upload Documents', icon: '📄' },
-    { path: '/chat', label: 'Messages', icon: '💬' },
+    { path: '/client/portal', label: 'Messages', icon: '💬' },
   ];
 
   const lawyerLinks = [
@@ -17,7 +16,6 @@ const Sidebar = ({ userType }) => {
     { path: '/lawyer/profile', label: 'Profile', icon: '👤' },
     { path: '/lawyer/communication', label: 'Communication', icon: '💬' },
     { path: '/lawyer/dashboard/appointments', label: 'Appointments', icon: '📅' },
-    { path: '/lawyer/dashboard/documents', label: 'Documents', icon: '📄' },
   ];
 
   const links = userType === 'client' ? clientLinks : lawyerLinks;

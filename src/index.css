@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 * {
   margin: 0;
   padding: 0;
@@ -5,17 +9,67 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: Calibri, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
+  color: #5A5F72;
+  font-size: 14px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #F5F6FA;
+  background-color: #F4F6F9;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: Georgia, serif;
+  color: #1B2B4B;
 }
 
 code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
 }
 
+/* Base form input styles to match Design System */
+input[type="text"], input[type="email"], input[type="password"], input[type="number"], textarea, select {
+  background-color: #FFFFFF;
+  border: 1px solid #D0D7E3;
+  border-radius: 8px;
+  color: #1E1E2E;
+  outline: none;
+  transition: all 0.2s ease;
+}
 
+input:focus, textarea:focus, select:focus {
+  border-color: #1B2B4B;
+  box-shadow: 0 0 0 2px rgba(201, 168, 76, 0.5); /* Gold glow outline */
+}
+
+/* Google Stitch Custom Styles */
+.diagonal-pattern {
+  background-color: #041635;
+  background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.03) 0px, rgba(255, 255, 255, 0.03) 2px, transparent 2px, transparent 10px);
+}
+.gold-underline {
+  background-image: linear-gradient(120deg, #ffe08f 0%, #ffe08f 100%);
+  background-repeat: no-repeat;
+  background-size: 100% 0.2em;
+  background-position: 0 88%;
+}
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  vertical-align: middle;
+}
+.verified-badge {
+  font-variation-settings: 'FILL' 1;
+}
+
+.pw-strength-bar {
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.bg-mesh-gradient {
+  background-color: #f7f9fb;
+  background-image: radial-gradient(at 0% 0%, hsla(217,100%,95%,1) 0, transparent 50%), 
+                    radial-gradient(at 50% 0%, hsla(220,100%,92%,1) 0, transparent 50%), 
+                    radial-gradient(at 100% 0%, hsla(215,100%,90%,1) 0, transparent 50%);
+}
+
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+.hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }

@@ -1,0 +1,201 @@
+.page {
+  display: flex;
+  gap: 2rem;
+  max-width: 1300px;
+  margin: 0 auto;
+  padding: 2rem;
+  min-height: calc(100vh - 160px);
+}
+
+.sidebar {
+  width: 240px;
+  flex-shrink: 0;
+}
+
+.sidebar h3 {
+  font-size: 1.1rem;
+  color: #1A1F2E;
+  margin: 0 0 1.5rem;
+}
+
+.filterGroup {
+  margin-bottom: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.filterGroup label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #1A1F2E;
+}
+
+.filterGroup select,
+.filterGroup input[type="number"] {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid rgba(15,42,94,0.15);
+  border-radius: 4px;
+  font-size: 0.9rem;
+  width: 100%;
+}
+
+.budgetRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.budgetRow input { width: 0; flex: 1; }
+
+.checkLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  font-weight: 400 !important;
+}
+
+.clearBtn {
+  background: none;
+  border: 1px solid rgba(15,42,94,0.2);
+  border-radius: 4px;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #6B7280;
+  width: 100%;
+  transition: all 0.2s;
+}
+.clearBtn:hover { background: #F5F6FA; }
+
+.main { flex: 1; min-width: 0; }
+
+.topBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.topBar h1 { margin: 0; font-size: 2rem; color: #1A1F2E; }
+
+.searchRow { display: flex; gap: 0.75rem; align-items: center; }
+
+.searchInput {
+  padding: 0.6rem 1rem;
+  border: 1px solid rgba(15,42,94,0.15);
+  border-radius: 4px;
+  font-size: 0.95rem;
+  width: 260px;
+}
+
+.postBtn {
+  background: linear-gradient(135deg, #C8920A, #E8B528);
+  color: #1A1F2E;
+  border: none;
+  padding: 0.6rem 1.25rem;
+  border-radius: 4px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.count { color: #6B7280; margin-bottom: 1.5rem; font-size: 0.95rem; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1.5rem;
+}
+
+.card {
+  background: white;
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+  cursor: pointer;
+  transition: box-shadow 0.2s, transform 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.12); transform: translateY(-2px); }
+
+.cardTop { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+
+.deptBadge {
+  background: #EFF6FF;
+  color: #0F2A5E;
+  border-radius: 999px;
+  padding: 0.2rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.urgentBadge {
+  background: #FEF3C7;
+  color: #92400E;
+  border-radius: 999px;
+  padding: 0.2rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.cardTitle { margin: 0; font-size: 1.1rem; color: #1A1F2E; font-weight: 600; }
+
+.cardDesc { margin: 0; font-size: 0.875rem; color: #6B7280; line-height: 1.5; flex: 1; }
+
+.cardMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.82rem;
+  color: #6B7280;
+}
+
+.bidBtn {
+  background: #0F2A5E;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 0.6rem;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.875rem;
+  margin-top: auto;
+  transition: background 0.2s;
+}
+.bidBtn:hover { background: #0E7490; }
+
+.empty { text-align: center; padding: 4rem; color: #6B7280; }
+
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1.5rem;
+  margin-top: 2rem;
+}
+
+.pagination button {
+  background: #0F2A5E;
+  color: white;
+  border: none;
+  padding: 0.5rem 1.25rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.pagination button:disabled { background: #D1D5DB; cursor: not-allowed; }
+.pagination span { color: #6B7280; font-size: 0.9rem; }
+
+@media (max-width: 768px) {
+  .page { flex-direction: column; padding: 1rem; }
+  .sidebar { width: 100%; }
+  .searchInput { width: 100%; }
+  .topBar { flex-direction: column; }
+}

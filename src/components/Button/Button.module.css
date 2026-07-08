@@ -1,13 +1,14 @@
 .button {
-  padding: 0.75rem 1.5rem;
-  border: none;
-  border-radius: 4px;
+  padding: 0.5rem 12px; /* 12px horizontal padding */
+  border: 1px solid transparent; /* default transparent border */
+  border-radius: 6px;
   font-size: 1rem;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.3s;
+  transition: all 0.3s ease;
   text-decoration: none;
   display: inline-block;
+  text-align: center;
 }
 
 .button:disabled {
@@ -16,52 +17,38 @@
 }
 
 .primary {
-  background: linear-gradient(135deg, #C8920A 0%, #E8B528 100%);
-  color: #1A1F2E;
+  background-color: #1B2B4B; /* Navy background */
+  color: #FFFFFF; /* White text */
 }
 
 .primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, #96690A 0%, #C8920A 100%);
+  border-color: #C9A84C; /* Gold border on hover */
 }
 
-.secondary {
-  background-color: #6B7280;
-  color: white;
+.secondary, .outline {
+  background-color: #FFFFFF; /* White background */
+  border: 1px solid #1B2B4B; /* Navy border */
+  color: #1B2B4B; /* Navy text */
 }
 
-.secondary:hover:not(:disabled) {
-  background-color: #6B7280;
-}
-
-.success {
-  background-color: #1E6B4A;
-  color: white;
-}
-
-.success:hover:not(:disabled) {
-  background-color: #1E6B4A;
+.secondary:hover:not(:disabled), .outline:hover:not(:disabled) {
+  background-color: #F4F6F9;
 }
 
 .danger {
-  /* OLD COLOR - needs review */
-  background-color: #e74c3c;
-  color: white;
+  background-color: #DC2626; /* Red background */
+  color: #FFFFFF; /* White text */
 }
 
 .danger:hover:not(:disabled) {
-  /* OLD COLOR - needs review */
-  background-color: #c0392b;
+  background-color: #B91C1C;
 }
 
-.outline {
-  background-color: transparent;
-  border: 2px solid #0E7490;
-  color: #0E7490;
+.success {
+  background-color: #16A34A;
+  color: #FFFFFF;
 }
 
-.outline:hover:not(:disabled) {
-  background-color: #0E7490;
-  color: white;
+.success:hover:not(:disabled) {
+  background-color: #15803D;
 }
-
-

@@ -100,4 +100,34 @@
   text-decoration: underline;
 }
 
+.hint {
+  font-size: 0.8rem;
+  color: #6B7280;
+}
+
+.twoCol {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.textarea {
+  padding: 0.75rem;
+  border: 1px solid rgba(15, 42, 94, 0.12);
+  border-radius: 4px;
+  font-size: 1rem;
+  font-family: inherit;
+  resize: vertical;
+  transition: border-color 0.3s;
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: #0E7490;
+}
+
+@media (max-width: 480px) {
+  .twoCol { grid-template-columns: 1fr; }
+}
+
 

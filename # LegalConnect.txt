@@ -1,0 +1,60 @@
+# LegalConnect
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="description" content="LegalConnect - Connect with lawyers" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <title>LegalConnect</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://kyjjwfvfoncohkziqsae.supabase.co" crossorigin>
+    
+    <!-- Preload critical fonts to avoid render blocking -->
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400;600;700&family=Work+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" />
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" />
+    
+    <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400;600;700&family=Work+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400;600;700&family=Work+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" /></noscript>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" /></noscript>
+    <script>
+      // Make ethereum property configurable to prevent redefinition errors
+      if (typeof window.ethereum !== 'undefined') {
+        try {
+          Object.defineProperty(window, 'ethereum', {
+            configurable: true,
+            writable: true,
+            value: window.ethereum
+          });
+        } catch (e) {
+          console.warn('Could not make ethereum configurable:', e);
+        }
+      }
+    </script>
+  <script defer src="/static/js/bundle.js"></script></head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="error-box" style="display:none; padding: 20px; background: #ffcccc; color: #cc0000; font-family: monospace; position: absolute; top: 0; left: 0; right: 0; z-index: 999999;"></div>
+    <script>
+      window.onerror = function(message, source, lineno, colno, error) {
+        var box = document.getElementById('error-box');
+        box.style.display = 'block';
+        box.innerHTML += '<b>Error:</b> ' + message + '<br><b>Source:</b> ' + source + ' (' + lineno + ':' + colno + ')<br><hr>';
+      };
+      window.addEventListener("unhandledrejection", function(event) {
+        var box = document.getElementById('error-box');
+        box.style.display = 'block';
+        box.innerHTML += '<b>Unhandled Promise Rejection:</b> ' + (event.reason && event.reason.stack ? event.reason.stack : event.reason) + '<br><hr>';
+      });
+    </script>
+    <div id="root"></div>
+  </body>
+</html>
+
+

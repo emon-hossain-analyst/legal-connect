@@ -1,0 +1,146 @@
+.wrapper {
+  position: relative;
+}
+
+.bell {
+  position: relative;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: white;
+  padding: 0.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background 0.2s;
+}
+
+.bell:hover { background: rgba(255,255,255,0.12); }
+
+.badge {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  background: #ef4444;
+  color: white;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  min-width: 17px;
+  height: 17px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  border: 2px solid #0F2A5E;
+}
+
+.panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  width: 340px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  z-index: 2000;
+  overflow: hidden;
+}
+
+.panelHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #E8F0FE;
+  font-weight: 600;
+  color: #1A1F2E;
+  font-size: 0.95rem;
+}
+
+.markAll {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #0E7490;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.markAll:hover { text-decoration: underline; }
+
+.empty {
+  padding: 2rem;
+  text-align: center;
+  color: #6B7280;
+  font-size: 0.9rem;
+}
+
+.emptyState {
+  padding: 2rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.9rem 1.25rem;
+  cursor: pointer;
+  border-bottom: 1px solid #F5F6FA;
+  transition: background 0.15s;
+}
+
+.item:hover { background: #F5F6FA; }
+
+.unread { background: #EFF6FF; }
+.unread:hover { background: #DBEAFE; }
+
+.itemDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+  margin-top: 5px;
+  flex-shrink: 0;
+}
+
+.unread .itemDot { background: #0E7490; }
+
+.itemBody { flex: 1; min-width: 0; }
+
+.itemTitle {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #1A1F2E;
+  line-height: 1.4;
+}
+
+.itemDesc {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  color: #6B7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.itemTime {
+  font-size: 0.75rem;
+  color: #9CA3AF;
+  margin-top: 0.25rem;
+  display: block;
+}

@@ -1,78 +1,106 @@
-import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import axios from 'axios';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { supabase } from '../../services/supabase';
+import { useAuth } from '../../context/AuthContext';
 import Button from '../../components/Button/Button';
 import Card from '../../components/Card/Card';
 import styles from './Auth.module.css';
 
 const Login = () => {
   const navigate = useNavigate();
-  const [formData, setFormData] = useState({
-    email: '',
-    password: '',
-    userType: 'client'
-  });
+  const [searchParams] = useSearchParams();
+  const redirect = searchParams.get('redirect');
+  const { setUser } = useAuth();
+  const [formData, setFormData] = useState({ email: '', password: '' });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('userType');
+  }, []);
 
   const validate = () => {
-    const newErrors = {};
-    
-    if (!formData.email) {
-      newErrors.email = 'Email is required';
-    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = 'Email is invalid';
-    }
-    
-    if (!formData.password) {
-      newErrors.password = 'Password is required';
-    } else if (formData.password.length < 6) {
-      newErrors.password = 'Password must be at least 6 characters';
-    }
-    
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    const e = {};
+    if (!formData.email) e.email = 'Email is required';
+    else if (!/\S+@\S+\.\S+/.test(formData.email)) e.email = 'Email is invalid';
+    if (!formData.password) e.password = 'Password is required';
+    else if (formData.password.length < 8) e.password = 'Password must be at least 8 characters';
+    setErrors(e);
+    return Object.keys(e).length === 0;
   };
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-    // Clear error when user starts typing
-    if (errors[name]) {
-      setErrors(prev => ({
-        ...prev,
-        [name]: ''
-      }));
-    }
+    setFormData((prev) => ({ ...prev, [name]: value }));
+    if (errors[name]) setErrors((prev) => ({ ...prev, [name]: '' }));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    if (!validate()) {
-      return;
-    }
+    if (!validate()) return;
 
     setLoading(true);
+    setErrors((prev) => ({ ...prev, submit: null }));
+
     try {
-      const response = await axios.post('/api/auth/login', formData);
-      // Store token and user info
-      localStorage.setItem('token', response.data.token);
-      localStorage.setItem('userType', formData.userType);
-      localStorage.setItem('userId', response.data.userId);
-      
-      // Redirect to appropriate dashboard
-      if (formData.userType === 'client') {
-        navigate('/client/dashboard');
-      } else {
-        navigate('/lawyer/dashboard');
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: formData.email.trim().toLowerCase(),
+        password: formData.password
+      });
+
+      if (error) {
+        const msg = error.message === 'Invalid login credentials'
+          ? 'Invalid credentials or email not confirmed. If you just registered, please check your email to confirm your account.'
+          : error.message;
+        setErrors((prev) => ({ ...prev, submit: msg }));
+        setLoading(false);
+        return;
       }
-    } catch (error) {
-      console.error('Login error:', error);
-      setErrors({ submit: error.response?.data?.message || 'Login failed. Please try again.' });
+
+      if (data.session && data.user) {
+        const u = data.user;
+        // Fetch user profile from database to ensure complete role and profile hydration
+        let { data: publicUser } = await supabase.from('users').select('*').eq('auth_id', u.id).maybeSingle();
+        if (!publicUser) {
+          const { data: byEmail } = await supabase.from('users').select('*').eq('email', u.email).maybeSingle();
+          publicUser = byEmail;
+        }
+
+        const userRole = publicUser?.user_type || publicUser?.role || u.user_metadata?.role || u.user_metadata?.user_type || 'client';
+        const userName = publicUser?.name || publicUser?.full_name || u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0];
+        const avatarUrl = publicUser?.profile_picture_url || u.user_metadata?.avatar_url || u.user_metadata?.profile_picture_url;
+
+        const hydratedUser = {
+          ...u,
+          ...u.user_metadata,
+          ...publicUser,
+          id: publicUser?.id || u.id,
+          auth_id: u.id,
+          user_type: userRole,
+          role: userRole,
+          full_name: userName,
+          name: userName,
+          profile_picture_url: avatarUrl
+        };
+
+        // Synchronize global auth state instantly
+        setUser(hydratedUser);
+
+        // Execute accurate router push based on role
+        let targetDashboard = '/client/dashboard';
+        if (userRole === 'lawyer') {
+          targetDashboard = '/lawyer-suite/dashboard';
+        } else if (userRole === 'admin') {
+          targetDashboard = '/admin';
+        }
+
+        navigate(redirect || targetDashboard, { replace: true });
+      }
+    } catch (err) {
+      console.error('Login error:', err);
+      setErrors((prev) => ({ ...prev, submit: err?.message || 'Login failed.' }));
     } finally {
       setLoading(false);
     }
@@ -83,21 +111,8 @@ const Login = () => {
       <Card className={styles.authCard}>
         <h2>Login</h2>
         <p className={styles.subtitle}>Sign in to your account</p>
-        
+
         <form onSubmit={handleSubmit} className={styles.form}>
-          <div className={styles.formGroup}>
-            <label htmlFor="userType">I am a:</label>
-            <select
-              id="userType"
-              name="userType"
-              value={formData.userType}
-              onChange={handleChange}
-              className={styles.select}
-            >
-              <option value="client">Client</option>
-              <option value="lawyer">Lawyer</option>
-            </select>
-          </div>
 
           <div className={styles.formGroup}>
             <label htmlFor="email">Email</label>
@@ -115,22 +130,38 @@ const Login = () => {
 
           <div className={styles.formGroup}>
             <label htmlFor="password">Password</label>
-            <input
-              type="password"
-              id="password"
-              name="password"
-              value={formData.password}
-              onChange={handleChange}
-              className={errors.password ? styles.inputError : ''}
-              placeholder="Enter your password"
-            />
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showPassword ? "text" : "password"}
+                id="password"
+                name="password"
+                value={formData.password}
+                onChange={handleChange}
+                className={errors.password ? styles.inputError : ''}
+                placeholder="Enter your password"
+                style={{ width: '100%', paddingRight: '60px' }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', color: '#6B7280' }}
+              >
+                {showPassword ? 'Hide' : 'Show'}
+              </button>
+            </div>
             {errors.password && <span className={styles.error}>{errors.password}</span>}
+          </div>
+
+          <div style={{ textAlign: 'right', marginTop: '-0.5rem' }}>
+            <Link to="/forgot-password" style={{ fontSize: '0.85rem', color: '#0E7490' }}>
+              Forgot password?
+            </Link>
           </div>
 
           {errors.submit && <div className={styles.errorMessage}>{errors.submit}</div>}
 
           <Button type="submit" disabled={loading} className={styles.submitButton}>
-            {loading ? 'Logging in...' : 'Login'}
+            {loading ? 'Logging in…' : 'Login'}
           </Button>
         </form>
 
@@ -143,5 +174,3 @@ const Login = () => {
 };
 
 export default Login;
-
-
