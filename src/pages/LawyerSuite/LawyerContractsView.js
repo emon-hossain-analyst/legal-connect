@@ -87,15 +87,21 @@ const LawyerContractsView = () => {
     }
   };
 
-  const updateContractStatus = async (id, newStatus) => {
+  const updateContractStatus = async (id, action) => {
     try {
-      const { error } = await supabase
-        .from('contracts')
-        .update({ status: newStatus })
-        .eq('id', id);
-      
-      if (error) throw error;
-      toast.success(`Contract marked as ${newStatus}`);
+      if (action === 'accept') {
+        // Use fn_lawyer_accept_contract RPC
+        const { error } = await supabase.rpc('fn_lawyer_accept_contract', { p_contract_id: id });
+        if (error) throw error;
+        toast.success('Contract accepted. Work has begun.');
+      } else if (action === 'terminate') {
+        const { error } = await supabase
+          .from('contracts')
+          .update({ status: 'Terminated', updated_at: new Date().toISOString() })
+          .eq('id', id);
+        if (error) throw error;
+        toast.success('Contract terminated.');
+      }
       fetchContracts();
     } catch (err) {
       console.error(err);
@@ -215,10 +221,10 @@ const LawyerContractsView = () => {
 
               <div className="mt-4 pt-4 border-t border-gray-100 flex justify-end items-center space-x-2">
                 {contract.status === 'Active' && (
-                  <button onClick={() => updateContractStatus(contract.id, 'Terminated')} className="px-3 py-1.5 bg-red-100 text-red-700 text-xs font-bold rounded hover:bg-red-200 transition-colors">Terminate Contract</button>
+                  <button onClick={() => updateContractStatus(contract.id, 'terminate')} className="px-3 py-1.5 bg-red-100 text-red-700 text-xs font-bold rounded hover:bg-red-200 transition-colors">Terminate Contract</button>
                 )}
-                {contract.status === 'Pending Review' && (
-                  <button onClick={() => updateContractStatus(contract.id, 'Active')} className="px-3 py-1.5 bg-[#041635] text-white text-xs font-bold rounded hover:bg-[#1B2B4B] transition-colors">Mark Active</button>
+                {['Pending Review', 'PENDING_CONTRACT', 'Draft', 'Pending_Signature'].includes(contract.status) && (
+                  <button onClick={() => updateContractStatus(contract.id, 'accept')} className="px-3 py-1.5 bg-[#041635] text-white text-xs font-bold rounded hover:bg-[#1B2B4B] transition-colors">Accept Contract</button>
                 )}
               </div>
             </div>

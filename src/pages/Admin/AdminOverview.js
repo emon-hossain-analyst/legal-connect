@@ -102,11 +102,11 @@ const AdminOverview = () => {
         supabase.from('lawyers').select('*', { count: 'exact', head: true }).eq('verification_status', 'pending'),
         supabase.from('feedback').select('*', { count: 'exact', head: true }).eq('is_flagged', true),
         supabase.from('contact_inquiries').select('*', { count: 'exact', head: true }).eq('status', 'unread'),
-        supabase.rpc('fn_get_admin_financial_summary').maybeSingle(),
+        supabase.from('payments').select('amount, commission_amount').in('status', ['completed', 'released']),
         supabase.from('appointments').select('*', { count: 'exact', head: true }),
       ]);
 
-      const calculatedRevenue = finSummary ? Number(finSummary.total_platform_revenue || 0) : 0;
+      const calculatedRevenue = (finSummary || []).reduce((sum, p) => sum + Number(p.commission_amount || 0), 0);
 
       setStats({
         totalUsers: usersCount || 0,

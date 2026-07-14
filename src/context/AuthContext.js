@@ -1,11 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { supabase } from '../services/supabase';
+import { realtimeSync } from '../services/realtimeSync.service';
 
 /**
  * AuthContext — single source of truth for authentication state using Supabase directly.
  */
 
-const AuthContext = createContext({
+export const AuthContext = createContext({
   user: null,
   loading: true,
   isAuthenticated: false,
@@ -31,7 +32,7 @@ export function AuthProvider({ children }) {
 
       try {
         const { data, error } = await withTimeout(
-          supabase.from('users').select('id, auth_id, user_type, name, profile_picture_url').eq('email', email).maybeSingle(),
+          supabase.from('users').select('id, auth_id, user_type, name, profile_picture_url, is_verified').eq('email', email).maybeSingle(),
           5000
         );
         if (error) {
@@ -130,8 +131,33 @@ export function AuthProvider({ children }) {
       }
     );
 
+    const unsubSync = realtimeSync.subscribe((payload) => {
+      setUser((prevUser) => {
+        if (!prevUser) return prevUser;
+        const matchesUser =
+          payload.userId === prevUser.id ||
+          payload.userId === prevUser.auth_id ||
+          payload.lawyerId === prevUser.id ||
+          (payload.record?.user_id && payload.record.user_id === prevUser.id);
+        if (matchesUser) {
+          console.log('[AuthContext] Realtime approval update received for current user:', payload);
+          const updated = {
+            ...prevUser,
+            is_verified: payload.is_verified !== undefined ? payload.is_verified : prevUser.is_verified,
+            verification_status: payload.verification_status || prevUser.verification_status
+          };
+          if (payload.record && payload.source === 'cdc_lawyers') {
+            updated._lawyerRecord = payload.record;
+          }
+          return updated;
+        }
+        return prevUser;
+      });
+    });
+
     return () => {
       cancelled = true;
+      unsubSync();
       if (authListener?.subscription) {
         authListener.subscription.unsubscribe();
       }
@@ -146,6 +172,7 @@ export function AuthProvider({ children }) {
     }
     setUser(null);
   }, []);
+
 
   const value = {
     user,

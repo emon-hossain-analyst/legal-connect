@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase';
 import { SkeletonDashboard } from '../../components/Skeleton/Skeleton';
+import { realtimeSync } from '../../services/realtimeSync.service';
 
 const LawyerDashboard = () => {
   const navigate = useNavigate();
@@ -20,6 +21,10 @@ const LawyerDashboard = () => {
 
   useEffect(() => { 
     if (user?.id) fetchDashboardData(); 
+    const unsub = realtimeSync.subscribe(() => {
+      if (user?.id) fetchDashboardData();
+    });
+    return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 

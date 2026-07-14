@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
 import { useAuth } from '../../context/AuthContext';
+import { realtimeSync } from '../../services/realtimeSync.service';
 
 const LawyerDashboardView = () => {
   const { user } = useAuth();
@@ -38,12 +39,12 @@ const LawyerDashboardView = () => {
         }
       } catch (lErr) {}
 
-      // Fetch analytics
-      const { data: analyticsData } = await supabase
-        .from('analytics_stats')
-        .select('*')
+      // Fetch total earnings from payments
+      const { data: paymentsData } = await supabase
+        .from('payments')
+        .select('amount, lawyer_payout, status')
         .in('lawyer_id', userIds)
-        .maybeSingle();
+        .in('status', ['completed', 'released']);
 
       // Fetch open cases count
       const { count: openCasesCount } = await supabase
@@ -95,30 +96,31 @@ const LawyerDashboardView = () => {
 
       setUpcomingAppointmentsList(upcomingApts || []);
 
-      // Fix 2: Fetch unread messages using conversations table
-      const { data: lawyerConversations } = await supabase
-        .from('conversations')
-        .select('id')
-        .in('lawyer_id', userIds);
-      
+      // Fetch unread messages via conversations table
       let unreadMsgCount = 0;
-      if (lawyerConversations && lawyerConversations.length > 0) {
-        const convIds = lawyerConversations.map(c => c.id);
-        const { count } = await supabase
-          .from('messages')
-          .select('*', { count: 'exact', head: true })
-          .in('conversation_id', convIds)
-          .eq('is_read', false)
-          .not('sender_id', 'in', `(${userIds.join(',')})`);
-        unreadMsgCount = count || 0;
-      }
+      try {
+        const { data: lawyerConversations } = await supabase
+          .from('conversations')
+          .select('id')
+          .in('lawyer_id', userIds);
+        if (lawyerConversations && lawyerConversations.length > 0) {
+          const convIds = lawyerConversations.map(c => c.id);
+          const { count } = await supabase
+            .from('messages')
+            .select('*', { count: 'exact', head: true })
+            .in('conversation_id', convIds)
+            .eq('is_read', false)
+            .not('sender_id', 'in', `(${userIds.join(',')})`);
+          unreadMsgCount = count || 0;
+        }
+      } catch (e) {}
 
-      // Fix 4: Fetch real pending proposals count
+      // Fetch real pending proposals count from job_proposals
       const { count: pendingProposalsCount } = await supabase
-        .from('contracts')
+        .from('job_proposals')
         .select('*', { count: 'exact', head: true })
         .in('lawyer_id', userIds)
-        .in('status', ['pending', 'Pending', 'Pending Review', 'pending_review', 'Draft', 'draft']);
+        .eq('status', 'pending');
 
       // Fetch lawyer rating from lawyers table
       const { data: lawyerData } = await supabase
@@ -127,24 +129,37 @@ const LawyerDashboardView = () => {
         .in('user_id', userIds)
         .maybeSingle();
 
-      // Fetch active cases details
+      // Fetch active cases with milestones
       let activeCases = [];
       try {
         const { data } = await supabase
           .from('cases')
-          .select('*')
+          .select('*, case_milestones(*)')
           .in('lawyer_id', userIds)
           .in('status', ['Active', 'active', 'Pending', 'pending'])
           .limit(3);
         if (data) activeCases = data;
-      } catch (e) {}
+      } catch (e) {
+        try {
+          const { data: fb } = await supabase
+            .from('cases')
+            .select('*')
+            .in('lawyer_id', userIds)
+            .in('status', ['Active', 'active', 'Pending', 'pending'])
+            .limit(3);
+          if (fb) activeCases = fb;
+        } catch (e2) {}
+      }
+
+      const totalEarnings = (paymentsData || [])
+        .reduce((sum, p) => sum + Number(p.lawyer_payout || p.amount || 0), 0);
 
       setStats({
         activeAppointments: appointmentsCount || 0,
         openCases: openCasesCount || 0,
         unreadMessages: unreadMsgCount,
         avgRating: lawyerData?.avg_rating || 0,
-        totalEarnings: analyticsData?.total_earnings || 0,
+        totalEarnings,
         pendingProposals: pendingProposalsCount || 0
       });
 
@@ -162,10 +177,26 @@ const LawyerDashboardView = () => {
     fetchDashboardData();
   }, [fetchDashboardData]);
 
-  // Fix 5: Real-time subscription for live dashboard updates
+  // Realtime: re-fetch when admin changes this lawyer's verification status
   useEffect(() => {
     if (!user) return;
-    const channel = supabase.channel(`lawyer_dashboard_realtime_${user.id}`)
+    const unsub = realtimeSync.subscribe((event) => {
+      const myId = user.id || user.auth_id;
+      const affectsMe =
+        (event.userId && event.userId === myId) ||
+        (event.record?.user_id && event.record.user_id === myId);
+      if (affectsMe) {
+        fetchDashboardData();
+      }
+    });
+    return () => unsub();
+  }, [user, fetchDashboardData]);
+
+  // Supabase CDC: live updates for appointments, cases, messages, contracts
+  useEffect(() => {
+    if (!user) return;
+    const channel = supabase
+      .channel(`lawyer_dashboard_realtime_${user.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, () => fetchDashboardData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'cases' }, () => fetchDashboardData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => fetchDashboardData())
@@ -293,23 +324,35 @@ const LawyerDashboardView = () => {
             <h3 className="font-headline-md text-headline-md text-primary">Active Case Progress</h3>
           </div>
           <div className="p-6 space-y-8">
-            {activeCasesList.length > 0 ? activeCasesList.map(c => (
+            {activeCasesList.length > 0 ? activeCasesList.map(c => {
+              const milestones = c.case_milestones || [];
+              const total = milestones.length;
+              const done = milestones.filter(m => m.status === 'completed').length;
+              const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+              return (
               <div key={c.id} className="space-y-4">
                 <div className="flex justify-between items-start">
                   <div>
                     <h4 className="font-headline-sm text-body-md text-primary font-bold">{c.title}</h4>
-                    <p className="text-xs text-on-surface-variant font-medium">Case ID: #{c.id.toString().padStart(4, '0')}</p>
+                    <p className="text-xs text-on-surface-variant font-medium">Case ID: #{c.id.toString().slice(0,8).toUpperCase()}</p>
                   </div>
                   <span className="bg-success-green/15 text-success-green text-[10px] px-2 py-0.5 rounded-full font-bold border border-success-green/20">IN PROGRESS</span>
                 </div>
                 <div className="space-y-2">
                   <div className="flex justify-between text-[11px] font-bold text-on-surface-variant">
-                    <span>Milestone: Pending Updates</span>
+                    <span>{total > 0 ? `${done}/${total} milestones done` : 'No milestones yet'}</span>
+                    <span>{pct}%</span>
                   </div>
+                  {total > 0 && (
+                    <div className="h-1.5 bg-surface-container rounded-full overflow-hidden">
+                      <div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} />
+                    </div>
+                  )}
                 </div>
-                <button className="w-full py-2 border border-outline text-primary font-bold text-xs uppercase tracking-widest rounded hover:bg-secondary-fixed transition-colors active:scale-95">View Details</button>
+                <button onClick={() => window.location.href = `/lawyer-suite/cases/${c.id}`} className="w-full py-2 border border-outline text-primary font-bold text-xs uppercase tracking-widest rounded hover:bg-secondary-fixed transition-colors active:scale-95">View Details</button>
               </div>
-            )) : (
+            );
+            }) : (
               <div className="text-center py-12 space-y-2">
                 <span className="material-symbols-outlined text-4xl text-gray-300">folder_open</span>
                 <p className="text-sm font-bold text-primary">No active legal matters</p>
@@ -340,7 +383,7 @@ const LawyerDashboardView = () => {
             <h3 className="font-headline-md text-headline-md text-secondary-fixed font-bold">Earnings Summary</h3>
             <p className="text-on-primary-container text-body-sm">All time performance review</p>
             <div className="pt-4">
-              <span className="text-display-lg font-display-lg">BDT {stats.totalEarnings}</span>
+              <span className="text-display-lg font-display-lg">BDT {Number(stats.totalEarnings).toLocaleString()}</span>
             </div>
           </div>
         </div>

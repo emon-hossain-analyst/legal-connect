@@ -1,129 +1,138 @@
-import { useState, useEffect, useCallback, createContext, useContext } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../services/supabase';
+import { realtimeSync } from '../services/realtimeSync.service';
 
-// Create a context so we can cache the lawyers data globally if needed
-const LawyerContext = createContext(null);
+// ─── helpers ──────────────────────────────────────────────────────────────────
 
-export const LawyerProvider = ({ children }) => {
-  const [cache, setCache] = useState({ lawyers: null, timestamp: null });
-
-  return (
-    <LawyerContext.Provider value={{ cache, setCache }}>
-      {children}
-    </LawyerContext.Provider>
-  );
+/** Normalise specialization regardless of whether it arrives as a scalar or array */
+const normalizeSpec = (v) => {
+  if (!v) return 'General Practice';
+  if (Array.isArray(v)) return v.join(', ') || 'General Practice';
+  return String(v);
 };
 
+/** Map a raw lawyers row (from RPC or direct query) to a consistent shape */
+const normalizeLawyer = (row) => ({
+  ...row,
+  specialization: normalizeSpec(row.specialization),
+  // RPC returns name/profile_picture_url at top level; direct query needs user object
+  user: row.user || {
+    name: row.name || null,
+    profile_picture_url: row.profile_picture_url || null,
+  },
+});
+
+// ─── useLawyers hook ──────────────────────────────────────────────────────────
+
 export const useLawyers = (filters = {}) => {
-  const [data, setData] = useState({ lawyers: [], total: 0 });
+  const [lawyers, setLawyers] = useState([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  
-  // Optional context for caching
-  const context = useContext(LawyerContext);
 
   const fetchLawyers = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
 
-      // Check cache first if no specific filters (or based on your caching strategy)
-      const noFilters = Object.keys(filters).length === 0 || (Object.keys(filters).length === 1 && filters.limit);
-      if (noFilters && context?.cache?.lawyers) {
-        // Use cached data if it's less than 5 minutes old
-        const now = new Date().getTime();
-        if (now - context.cache.timestamp < 5 * 60 * 1000) {
-          setData(context.cache.lawyers);
-          setLoading(false);
-          return;
+      // ── Primary: RPC (correct INT id, scalar specialization, LEFT JOIN) ──
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('search_lawyers', {
+        p_verified_only: true,
+        p_limit: filters.limit || 50,
+        p_offset: 0,
+        ...(filters.specialization ? { p_category: filters.specialization } : {}),
+      });
+
+      if (!rpcErr && rpcData) {
+        let results = rpcData.map(normalizeLawyer);
+        if (filters.rating) {
+          results = results.filter(l => (l.avg_rating || 0) >= filters.rating);
         }
+        setLawyers(results);
+        setTotal(results.length);
+        return;
       }
 
+      console.warn('[useLawyers] RPC failed, using direct query fallback:', rpcErr?.message);
+
+      // ── Fallback: direct query + separate user enrichment ──
       let query = supabase
         .from('lawyers')
-        .select(`
-          *,
-          users!inner (
-            id,
-            name,
-            profile_picture_url,
-            is_active
-          )
-        `, { count: 'exact' })
-        .eq('users.is_active', true); // only active users
+        .select('*', { count: 'exact' })
+        .eq('is_verified', true);   // use simple eq — avoids enum cast issues
 
-      // Apply filters
-      if (filters.specialization) {
-        // Depending on your schema, if 'specialization' is a string
-        query = query.ilike('specialization', `%${filters.specialization}%`);
-      }
-      
-      if (filters.rating) {
-        query = query.gte('avg_rating', filters.rating);
-      }
+      if (filters.specialization) query = query.ilike('specialization', `%${filters.specialization}%`);
+      if (filters.rating)         query = query.gte('avg_rating', filters.rating);
+      if (filters.limit)          query = query.limit(filters.limit);
 
-      if (filters.limit) {
-        query = query.limit(filters.limit);
-      }
+      query = filters.sort === 'rating'
+        ? query.order('avg_rating', { ascending: false })
+        : query.order('created_at', { ascending: false });
 
-      if (filters.sort === 'rating') {
-        query = query.order('avg_rating', { ascending: false });
-      } else {
-        query = query.order('created_at', { ascending: false });
-      }
-
-      const { data: lawyersData, error: fetchError, count } = await query;
-
+      const { data, error: fetchError, count } = await query;
       if (fetchError) throw fetchError;
 
-      const result = { lawyers: lawyersData || [], total: count || 0 };
-      setData(result);
+      const rows = data || [];
 
-      // Cache the result if applicable
-      if (noFilters && context) {
-        context.setCache({ lawyers: result, timestamp: new Date().getTime() });
+      // Enrich with user data (separate query avoids FK alias dependency)
+      const userIds = [...new Set(rows.map(l => l.user_id).filter(Boolean))];
+      if (userIds.length > 0) {
+        const { data: usersData } = await supabase
+          .from('users')
+          .select('id, name, profile_picture_url')
+          .in('id', userIds);
+        const userMap = {};
+        (usersData || []).forEach(u => { userMap[u.id] = u; });
+        rows.forEach(l => { l.user = userMap[l.user_id] || null; });
       }
 
+      setLawyers(rows.map(normalizeLawyer));
+      setTotal(count || rows.length);
     } catch (err) {
-      console.error('Error fetching lawyers:', err);
+      console.error('[useLawyers] fetch error:', err);
       setError(err.message || 'Failed to fetch lawyers');
     } finally {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(filters), context]);
+  }, [JSON.stringify(filters)]);
 
+  useEffect(() => { fetchLawyers(); }, [fetchLawyers]);
+
+  // Realtime: refetch whenever any lawyer verification status changes
   useEffect(() => {
-    fetchLawyers();
+    const unsub = realtimeSync.subscribe(() => { fetchLawyers(); });
+    return () => unsub();
   }, [fetchLawyers]);
 
-  return { ...data, loading, error, refetch: fetchLawyers };
+  return { lawyers, total, loading, error, refetch: fetchLawyers };
 };
 
-export const fetchSingleLawyer = async (idOrSlug) => {
-  // Can pass either an ID (number/string) or a slug
-  const isId = !isNaN(parseInt(idOrSlug));
-  
-  let query = supabase
-    .from('lawyers')
-    .select(`
-      *,
-      users!inner (
-        id,
-        name,
-        email,
-        profile_picture_url,
-        is_active
-      )
-    `);
+// ─── fetchSingleLawyer ────────────────────────────────────────────────────────
 
-  if (isId) {
-    query = query.eq('id', idOrSlug);
-  } else {
-    query = query.eq('slug', idOrSlug);
+export const fetchSingleLawyer = async (idOrSlug) => {
+  const isNumericId =
+    !isNaN(parseInt(idOrSlug, 10)) &&
+    String(parseInt(idOrSlug, 10)) === String(idOrSlug);
+
+  let query = supabase.from('lawyers').select('*');
+  query = isNumericId
+    ? query.eq('id', parseInt(idOrSlug, 10))
+    : query.or(`slug.eq.${idOrSlug},user_id.eq.${idOrSlug}`);
+
+  const { data: lawyer, error } = await query.maybeSingle();
+  if (error) throw error;
+  if (!lawyer) return null;
+
+  // Enrich with user data via separate query (no FK alias dependency)
+  if (lawyer.user_id) {
+    const { data: userData } = await supabase
+      .from('users')
+      .select('id, name, email, profile_picture_url, is_active')
+      .eq('id', lawyer.user_id)
+      .maybeSingle();
+    lawyer.user = userData || null;
   }
 
-  const { data, error } = await query.single();
-  if (error) throw error;
-  return data;
+  return normalizeLawyer(lawyer);
 };

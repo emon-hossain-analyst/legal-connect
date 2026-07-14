@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
+import { realtimeSync } from '../services/realtimeSync.service';
 
 export function useLawyerProfile() {
   const { user } = useAuth();
@@ -42,6 +43,15 @@ export function useLawyerProfile() {
     };
 
     fetchProfile();
+
+    const unsub = realtimeSync.subscribe((payload) => {
+      const uId = user.auth_id || user.id;
+      if (payload.userId === uId || !payload.userId || payload.action === 'APPROVED' || payload.action === 'REJECTED') {
+        fetchProfile();
+      }
+    });
+
+    return () => unsub();
   }, [user]);
 
   const updateProfile = async (updates) => {

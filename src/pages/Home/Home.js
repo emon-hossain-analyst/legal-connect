@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../../services/supabase";
+import { realtimeSync } from "../../services/realtimeSync.service";
 
 
 const Home = () => {
@@ -10,29 +11,7 @@ const Home = () => {
   const [loadingLawyers, setLoadingLawyers] = useState(true);
   const [heroLawyer, setHeroLawyer] = useState(null);
 
-  useEffect(() => {
-    fetchData();
-    // Simple animation trigger (from the HTML script)
-    const observerOptions = { threshold: 0.1 };
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-          entry.target.classList.add('opacity-100', 'translate-y-0');
-          entry.target.classList.remove('opacity-0', 'translate-y-4');
-        }
-      });
-    }, observerOptions);
-
-    const sections = document.querySelectorAll('.animate-section');
-    sections.forEach(section => {
-      section.classList.add('transition-all', 'duration-700', 'opacity-0', 'translate-y-4');
-      observer.observe(section);
-    });
-
-    return () => observer.disconnect();
-  }, []);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       // Fetch Departments
       const { data: deptData } = await supabase
@@ -52,62 +31,102 @@ const Home = () => {
         
       if (updatesData) setRecentUpdates(updatesData);
 
-      // Fetch Real Verified Lawyers dynamically
+      // Fetch verified lawyers — RPC first, then direct query fallback
       setLoadingLawyers(true);
-      let lawyersList = null;
-      try {
-        const { data: rpcData, error: rpcErr } = await supabase.rpc('search_lawyers', {
-          p_verified_only: true,
-          p_limit: 8,
-          p_offset: 0
-        });
-        if (!rpcErr && rpcData && rpcData.length > 0) {
-          lawyersList = rpcData.map(item => ({
-            id: item.id,
-            full_name: item.name || 'Verified Advocate',
-            specialty: item.specialization || 'General Practice',
-            hourly_rate: item.hourly_rate || 2000,
-            rating: item.avg_rating || 5.0,
-            reviews_count: item.total_reviews || 0,
-            experience_years: item.experience_years || 5,
-            profile_image_url: item.profile_picture_url || "https://images.unsplash.com/photo-1560250097-0b93528c311a?w=200&auto=format&fit=crop"
-          }));
-        }
-      } catch (e) {}
+      let lawyersList = [];
 
-      if (!lawyersList) {
-        try {
-          const { data: rawLawyers } = await supabase
-            .from('lawyers')
-            .select('*, user:users(name, profile_picture_url)')
-            .eq('is_verified', true)
-            .limit(8);
-          if (rawLawyers && rawLawyers.length > 0) {
-            lawyersList = rawLawyers.map(l => ({
-              id: l.id,
-              full_name: l.user?.name || l.full_name || 'Verified Advocate',
-              specialty: l.specialization || 'General Practice',
-              hourly_rate: l.hourly_rate || 2000,
-              rating: l.avg_rating || 5.0,
-              reviews_count: l.total_reviews || 0,
-              experience_years: l.experience_years || 5,
-              profile_image_url: l.user?.profile_picture_url || l.profile_image_url || l.profile_picture_url || "https://images.unsplash.com/photo-1560250097-0b93528c311a?w=200&auto=format&fit=crop"
-            }));
+      const toCard = (row, userName, userPic) => ({
+        id: row.id,
+        slug: row.slug,
+        full_name: userName || row.name || 'Verified Advocate',
+        specialty: Array.isArray(row.specialization)
+          ? (row.specialization.join(', ') || 'General Practice')
+          : (row.specialization || 'General Practice'),
+        hourly_rate: row.hourly_rate || 2000,
+        rating: row.avg_rating || 5.0,
+        reviews_count: row.total_reviews || 0,
+        experience_years: row.experience_years || 5,
+        profile_image_url: userPic || row.profile_picture_url || row.profile_image_url || null,
+      });
+
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('search_lawyers', {
+        p_verified_only: true,
+        p_limit: 8,
+        p_offset: 0,
+      });
+
+      if (!rpcErr && rpcData && rpcData.length > 0) {
+        lawyersList = rpcData.map(item => toCard(item, item.name, item.profile_picture_url));
+      } else {
+        if (rpcErr) console.warn('[Home] search_lawyers RPC error:', rpcErr.message);
+
+        // Direct query — use simple eq(is_verified, true) to avoid enum cast issues
+        const { data: rawLawyers, error: rawErr } = await supabase
+          .from('lawyers')
+          .select('*')
+          .eq('is_verified', true)
+          .order('avg_rating', { ascending: false })
+          .limit(8);
+
+        if (rawErr) console.error('[Home] direct lawyers query error:', rawErr.message);
+
+        if (rawLawyers && rawLawyers.length > 0) {
+          const userIds = [...new Set(rawLawyers.map(l => l.user_id).filter(Boolean))];
+          const userMap = {};
+          if (userIds.length > 0) {
+            const { data: usersData } = await supabase
+              .from('users')
+              .select('id, name, profile_picture_url')
+              .in('id', userIds);
+            (usersData || []).forEach(u => { userMap[u.id] = u; });
           }
-        } catch (e) {}
+          lawyersList = rawLawyers.map(l => {
+            const u = userMap[l.user_id] || {};
+            return toCard(l, u.name, u.profile_picture_url);
+          });
+        }
       }
 
-      const finalLawyers = lawyersList || [];
-      setFeaturedLawyers(finalLawyers);
-      if (finalLawyers.length > 0) {
-        setHeroLawyer(finalLawyers[0]);
-      }
+      setFeaturedLawyers(lawyersList);
+      if (lawyersList.length > 0) setHeroLawyer(lawyersList[0]);
     } catch (err) {
       console.error('Failed to load home data', err);
     } finally {
       setLoadingLawyers(false);
     }
-  };
+  }, []);
+
+  // Initial data load
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // Realtime: refetch featured lawyers when any approval changes
+  useEffect(() => {
+    const unsub = realtimeSync.subscribe(() => {
+      fetchData();
+    });
+    return () => unsub();
+  }, [fetchData]);
+
+  // Intersection observer for scroll animations
+  useEffect(() => {
+    const observerOptions = { threshold: 0.1 };
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('opacity-100', 'translate-y-0');
+          entry.target.classList.remove('opacity-0', 'translate-y-4');
+        }
+      });
+    }, observerOptions);
+    const sections = document.querySelectorAll('.animate-section');
+    sections.forEach(section => {
+      section.classList.add('transition-all', 'duration-700', 'opacity-0', 'translate-y-4');
+      observer.observe(section);
+    });
+    return () => observer.disconnect();
+  }, []);
 
   const displayDepts = departments.length > 0 ? departments : [
     { id: 1, name: "Family Law", icon: "family_restroom", color: "bg-blue-100 text-blue-800", count: 142 },

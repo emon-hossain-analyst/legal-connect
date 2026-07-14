@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation, Link } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
+import { realtimeSync } from '../../services/realtimeSync.service';
 
 const LawyerSearch = () => {
   const location = useLocation();
@@ -31,10 +32,20 @@ const LawyerSearch = () => {
     fetchDynamicCategories();
   }, []);
 
+  // Re-fetch when filters change
   useEffect(() => {
     fetchLawyers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery, selectedDepts, locationQuery, maxRate, sortOption, currentPage]);
+
+  // Re-fetch when any lawyer verification status changes (realtime)
+  useEffect(() => {
+    const unsub = realtimeSync.subscribe(() => {
+      fetchLawyers();
+    });
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchDynamicCategories = async () => {
     try {
@@ -49,109 +60,92 @@ const LawyerSearch = () => {
     }
   };
 
-  const fetchLawyers = async () => {
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const fetchLawyers = useCallback(async () => {
     setLoading(true);
+    setErrorMsg(null);
     try {
-      let data = null, error = null;
-      
-      // 1. Try server-side full-text search procedure first (Phase 12 RPC)
-      try {
-        const { data: rpcData, error: rpcErr } = await supabase.rpc('search_lawyers', {
-          p_query: searchQuery || null,
-          p_category: selectedDepts.length > 0 ? selectedDepts[0] : null,
-          p_location: locationQuery || null,
-          p_max_rate: maxRate,
-          p_verified_only: true,
-          p_limit: 100,
-          p_offset: 0
-        });
+      let data = null;
 
-        if (!rpcErr && rpcData && rpcData.length > 0) {
-          data = rpcData.map(item => ({
-            ...item,
-            user: { name: item.name, profile_picture_url: item.profile_picture_url }
-          }));
-        }
-      } catch (e) {}
+      // ── 1. Try RPC (correct INT id, scalar specialization, LEFT JOIN) ──
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('search_lawyers', {
+        p_query:         searchQuery || null,
+        p_category:      selectedDepts.length > 0 ? selectedDepts[0] : null,
+        p_location:      locationQuery || null,
+        p_max_rate:      maxRate < 10000 ? maxRate : null,
+        p_verified_only: true,
+        p_limit:         200,
+        p_offset:        0,
+      });
 
-      // 2. Try with relational join if RPC returned no rows or errored
-      if (!data) {
-        try {
-          let query = supabase
-            .from('lawyers')
-            .select('*, user:users(name, profile_picture_url)', { count: 'exact' })
-            .eq('is_verified', true)
-            .lte('hourly_rate', maxRate);
+      if (!rpcErr && rpcData) {
+        data = rpcData.map(item => ({
+          ...item,
+          specialization: item.specialization || 'General Practice',
+          user: { name: item.name, profile_picture_url: item.profile_picture_url },
+        }));
+      } else {
+        if (rpcErr) console.warn('[LawyerSearch] RPC error:', rpcErr.message);
 
-          if (locationQuery) {
-            query = query.ilike('location', `%${locationQuery}%`);
-          }
-
-          const result = await query;
-          data = result.data;
-          error = result.error;
-        } catch (e) {}
-      }
-
-      // If join failed, fallback to independent queries
-      if (error || !data) {
+        // ── 2. Direct query fallback — simple eq to avoid enum cast issues ──
         let query = supabase
           .from('lawyers')
           .select('*', { count: 'exact' })
-          .eq('is_verified', true)
-          .lte('hourly_rate', maxRate);
+          .eq('is_verified', true);
 
-        if (locationQuery) {
-          query = query.ilike('location', `%${locationQuery}%`);
-        }
+        if (maxRate < 10000) query = query.lte('hourly_rate', maxRate);
+        if (locationQuery)   query = query.ilike('location', `%${locationQuery}%`);
 
-        const result = await query;
-        if (result.error) throw result.error;
-        data = result.data || [];
+        const { data: rawLawyers, error: rawErr } = await query;
+        if (rawErr) throw rawErr;
 
-        // Enrich with user data independently
-        const userIds = [...new Set(data.map(l => l.user_id).filter(Boolean))];
+        const rows = rawLawyers || [];
+        const userIds = [...new Set(rows.map(l => l.user_id).filter(Boolean))];
+        const userMap = {};
         if (userIds.length > 0) {
-          let usersData = [];
-          try { const r = await supabase.from('users').select('id, name, profile_picture_url').in('id', userIds); usersData = r.data || []; } catch (e) {}
-          const userMap = {};
-          usersData.forEach(u => { userMap[u.id] = u; });
-          data = data.map(l => ({ ...l, user: userMap[l.user_id] || { name: 'Lawyer', profile_picture_url: null } }));
+          const { data: usersData } = await supabase
+            .from('users')
+            .select('id, name, profile_picture_url')
+            .in('id', userIds);
+          (usersData || []).forEach(u => { userMap[u.id] = u; });
         }
+        data = rows.map(l => ({
+          ...l,
+          specialization: l.specialization || 'General Practice',
+          user: userMap[l.user_id] || { name: 'Verified Lawyer', profile_picture_url: null },
+        }));
       }
 
-      // Also fetch lawyer_expertise_junction for relational matching
+      // ── 3. Fetch expertise junction for relational category matching ──
       const { data: junctionData } = await supabase
         .from('lawyer_expertise_junction')
-        .select('*');
+        .select('lawyer_id, expertise_id');
 
       let filteredData = (data || []).map(lwr => {
-        const lwrId = lwr.id || lwr.user_id;
         const expertiseIds = (junctionData || [])
-          .filter(j => j.lawyer_id === lwrId || j.lawyer_id === lwr.user_id)
+          .filter(j => j.lawyer_id === lwr.id || j.lawyer_id === lwr.user_id)
           .map(j => j.expertise_id);
         return { ...lwr, expertiseIds };
       });
 
+      // ── 4. Client-side filters (applied after RPC for extra precision) ──
       if (searchQuery) {
         const sq = searchQuery.toLowerCase();
-        filteredData = filteredData.filter(l => {
-          const nameMatch = l.user?.name?.toLowerCase().includes(sq);
-          const specMatch = l.specialization?.toLowerCase().includes(sq);
-          const expMatch = l.expertiseIds?.some(id => {
+        filteredData = filteredData.filter(l =>
+          (l.user?.name || '').toLowerCase().includes(sq) ||
+          (l.specialization || '').toLowerCase().includes(sq) ||
+          (l.expertiseIds || []).some(id => {
             const expObj = legalExpertise.find(e => e.id === id);
             return expObj?.name?.toLowerCase().includes(sq);
-          });
-          return nameMatch || specMatch || expMatch;
-        });
+          })
+        );
       }
 
-      // Filter by selected dynamic practice areas / subcategories
       if (selectedDepts.length > 0) {
         filteredData = filteredData.filter(l => {
-          // Check legacy specialization or dynamic relational expertise
-          const legacyMatch = selectedDepts.some(d => l.specialization?.toLowerCase().includes(d.toLowerCase()));
-          const relationalMatch = l.expertiseIds?.some(id => {
+          const specStr = (l.specialization || '').toLowerCase();
+          const legacyMatch = selectedDepts.some(d => specStr.includes(d.toLowerCase()));
+          const relationalMatch = (l.expertiseIds || []).some(id => {
             const expObj = legalExpertise.find(e => e.id === id);
             const areaObj = practiceAreas.find(pa => pa.id === expObj?.practice_area_id);
             return selectedDepts.includes(expObj?.name) || selectedDepts.includes(areaObj?.name);
@@ -160,30 +154,23 @@ const LawyerSearch = () => {
         });
       }
 
-      // Sorting
-      if (sortOption === 'Top Rated') {
-        filteredData.sort((a, b) => (b.avg_rating || 0) - (a.avg_rating || 0));
-      } else if (sortOption === 'Highest Price') {
-        filteredData.sort((a, b) => (b.hourly_rate || 0) - (a.hourly_rate || 0));
-      } else if (sortOption === 'Lowest Price') {
-        filteredData.sort((a, b) => (a.hourly_rate || 0) - (b.hourly_rate || 0));
-      } else if (sortOption === 'Experience') {
-        filteredData.sort((a, b) => (b.experience_years || 0) - (a.experience_years || 0));
-      }
+      // ── 5. Sort ──
+      if (sortOption === 'Top Rated')      filteredData.sort((a, b) => (b.avg_rating || 0) - (a.avg_rating || 0));
+      else if (sortOption === 'Highest Price') filteredData.sort((a, b) => (b.hourly_rate || 0) - (a.hourly_rate || 0));
+      else if (sortOption === 'Lowest Price')  filteredData.sort((a, b) => (a.hourly_rate || 0) - (b.hourly_rate || 0));
+      else if (sortOption === 'Experience')    filteredData.sort((a, b) => (b.experience_years || 0) - (a.experience_years || 0));
 
       setTotalCount(filteredData.length);
-      
       const from = (currentPage - 1) * itemsPerPage;
-      const to = from + itemsPerPage;
-      setLawyers(filteredData.slice(from, to));
+      setLawyers(filteredData.slice(from, from + itemsPerPage));
 
     } catch (err) {
-      console.error('Fetch error:', err);
+      console.error('[LawyerSearch] fetch error:', err);
       setErrorMsg(err.message || JSON.stringify(err));
     } finally {
       setLoading(false);
     }
-  };
+  }, [searchQuery, selectedDepts, locationQuery, maxRate, sortOption, currentPage, legalExpertise, practiceAreas]);
 
   const handleDeptToggle = (name) => {
     setSelectedDepts(prev => 

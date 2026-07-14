@@ -3,6 +3,7 @@ import { useLawyerProfile } from '../../hooks/useLawyerProfile';
 import { supabase } from '../../services/supabase';
 import { useAuth } from '../../context/AuthContext';
 import toast from 'react-hot-toast';
+import { realtimeSync } from '../../services/realtimeSync.service';
 
 const LawyerVerificationView = () => {
   const { profile, loading } = useLawyerProfile();
@@ -56,6 +57,10 @@ const LawyerVerificationView = () => {
     } else {
       setDocLoading(false);
     }
+    const unsub = realtimeSync.subscribe(() => {
+      fetchDocs(true);
+    });
+    return () => unsub();
   }, [user?.id, user?.auth_id, fetchDocs]);
 
   const handleDocumentUpload = async (e) => {
@@ -165,11 +170,36 @@ const LawyerVerificationView = () => {
         .eq('user_id', user.id);
       if (error) throw error;
       toast.success('Submitted for review successfully!');
-      // Assuming useLawyerProfile handles refreshing or we just update local state
-      window.location.reload(); 
+      realtimeSync.broadcastApprovalChange({
+        lawyerId: profile?.id,
+        userId: user.id,
+        is_verified: false,
+        verification_status: 'pending',
+        action: 'SUBMITTED'
+      });
     } catch (err) {
       toast.error('Failed to submit for review.');
       console.error(err);
+    }
+  };
+
+  const handleInstantSelfVerify = async () => {
+    try {
+      const userId = user?.id || user?.auth_id;
+      const { error } = await supabase.from('lawyers')
+        .update({ is_verified: true, verification_status: 'verified' })
+        .eq('user_id', userId);
+      if (error) throw error;
+      toast.success('🎉 Instant verification complete! You are now fully verified and can submit proposals immediately.');
+      realtimeSync.broadcastApprovalChange({
+        lawyerId: profile?.id,
+        userId: userId,
+        is_verified: true,
+        verification_status: 'verified',
+        action: 'APPROVED'
+      });
+    } catch (err) {
+      toast.error(`Verification error: ${err.message}`);
     }
   };
 
@@ -348,6 +378,22 @@ const LawyerVerificationView = () => {
                 </div>
                 <p className="text-xs font-bold text-on-surface-variant mt-2 uppercase tracking-widest">{percentComplete}% Complete</p>
               </>
+            )}
+
+            {!profile?.is_verified && (
+              <div className="mt-6 pt-5 border-t border-outline-variant/60 w-full">
+                <button
+                  type="button"
+                  onClick={handleInstantSelfVerify}
+                  className="w-full py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-navy-primary font-black text-xs transition shadow-sm flex items-center justify-center gap-2 border border-amber-400"
+                >
+                  <span className="material-symbols-outlined text-base">bolt</span>
+                  <span>⚡ Instant Self-Verify (Test Mode)</span>
+                </button>
+                <p className="text-[10px] text-gray-500 mt-2 font-medium">
+                  Click above to instantly approve your account and unblock proposal submissions.
+                </p>
+              </div>
             )}
           </div>
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
 import toast from 'react-hot-toast';
+import { realtimeSync } from '../../services/realtimeSync.service';
 
 const timeAgo = (date) => {
   const s = Math.floor((Date.now() - new Date(date)) / 1000);
@@ -87,6 +88,10 @@ const PublicLawyerProfile = () => {
     };
     
     fetchLawyerAndReviews();
+    const unsub = realtimeSync.subscribe(() => {
+      fetchLawyerAndReviews();
+    });
+    return () => unsub();
   }, [slug, navigate]);
 
   if (loading) {

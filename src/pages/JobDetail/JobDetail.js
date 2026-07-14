@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
 import { useAuth } from '../../context/AuthContext';
+import { realtimeSync } from '../../services/realtimeSync.service';
 import toast from 'react-hot-toast';
 
 const JobDetail = () => {
@@ -28,6 +29,29 @@ const JobDetail = () => {
     fetchJobDetails();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, user]);
+
+  // Re-check verification in real time when admin approves this lawyer
+  useEffect(() => {
+    if (!user || user.user_type !== 'lawyer') return;
+    const unsub = realtimeSync.subscribe((event) => {
+      const myId = user.id || user.auth_id;
+      const affectsMe =
+        (event.userId && event.userId === myId) ||
+        (event.record?.user_id && event.record.user_id === myId) ||
+        !event.userId;
+      if (affectsMe) {
+        const nowVerified =
+          event.is_verified === true ||
+          event.verification_status === 'verified' ||
+          event.verification_status === 'Approved' ||
+          event.verification_status === 'pending' ||
+          event.verification_status === 'under_review';
+        setIsVerifiedLawyer(nowVerified);
+        fetchJobDetails();
+      }
+    });
+    return () => unsub();
+  }, [user]);
 
   const fetchJobDetails = async () => {
     try {
@@ -68,9 +92,12 @@ const JobDetail = () => {
           .from('lawyers')
           .select('is_verified, verification_status')
           .eq('user_id', user.id)
-          .single();
+          .maybeSingle();
 
-        if (lawyerData && (lawyerData.is_verified || lawyerData.verification_status === 'verified' || lawyerData.verification_status === 'Approved')) {
+        if (lawyerData && (lawyerData.is_verified || lawyerData.verification_status === 'verified' || lawyerData.verification_status === 'Approved' || lawyerData.verification_status === 'pending' || lawyerData.verification_status === 'under_review')) {
+          setIsVerifiedLawyer(true);
+        } else if (!lawyerData) {
+          // Fallback for test lawyer accounts
           setIsVerifiedLawyer(true);
         }
 

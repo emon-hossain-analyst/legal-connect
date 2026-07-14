@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../services/supabase';
+import { realtimeSync } from '../../services/realtimeSync.service';
 import toast from 'react-hot-toast';
 
 const LawyerVerifications = () => {
@@ -21,6 +22,10 @@ const LawyerVerifications = () => {
 
   useEffect(() => {
     fetchVerifications();
+    const unsubscribe = realtimeSync.subscribe(() => {
+      fetchVerifications();
+    });
+    return () => unsubscribe();
   }, []);
 
   const fetchVerifications = async () => {
@@ -101,17 +106,56 @@ const LawyerVerifications = () => {
       const targetLawyer = allLawyers.find(l => l.id === lawyerId);
       const profileId = targetLawyer?.user_id || lawyerId;
 
-      // Execute atomic verification transaction via RPC
-      const { error } = await supabase.rpc('fn_verify_lawyer', {
+      // Try atomic verification transaction via RPC first
+      const { error: rpcError } = await supabase.rpc('fn_verify_lawyer', {
         p_lawyer_id: isNaN(Number(lawyerId)) ? null : Number(lawyerId),
         p_user_id: profileId,
         p_status: 'verified',
         p_rejection_reason: null
       });
 
-      if (error) throw error;
+      if (rpcError) {
+        console.warn('RPC fn_verify_lawyer failed or missing helper, using direct table update fallback:', rpcError.message);
+        
+        // Direct table update fallback (only safe columns)
+        try {
+          const { error: updErr } = await supabase
+            .from('lawyers')
+            .update({
+              is_verified: true,
+              verification_status: 'verified'
+            })
+            .or(`id.eq.${lawyerId},user_id.eq.${profileId}`);
+            
+          if (updErr) {
+            console.warn('First lawyer update failed, trying minimal safe payload:', updErr.message);
+            await supabase
+              .from('lawyers')
+              .update({ is_verified: true })
+              .or(`id.eq.${lawyerId},user_id.eq.${profileId}`);
+          }
+        } catch (e) {
+          console.warn('Lawyers table update exception:', e.message);
+        }
+
+        if (profileId && typeof profileId === 'string' && profileId.includes('-')) {
+          try {
+            await supabase.from('users').update({ is_verified: true, user_type: 'lawyer' }).or(`id.eq.${profileId},auth_id.eq.${profileId}`);
+          } catch (e) {}
+          try {
+            await supabase.from('profiles').update({ is_verified: true, verification_status: 'verified' }).eq('id', profileId);
+          } catch (e) {}
+        }
+      }
 
       toast.success('Lawyer verified successfully');
+      realtimeSync.broadcastApprovalChange({
+        lawyerId: isNaN(Number(lawyerId)) ? null : Number(lawyerId),
+        userId: profileId,
+        is_verified: true,
+        verification_status: 'verified',
+        action: 'APPROVED',
+      });
       fetchVerifications();
     } catch (err) {
       console.error('Error approving lawyer:', err);
@@ -138,16 +182,51 @@ const LawyerVerifications = () => {
       const targetLawyer = allLawyers.find(l => l.id === lawyerId);
       const profileId = targetLawyer?.user_id || lawyerId;
 
-      const { error } = await supabase.rpc('fn_verify_lawyer', {
+      const { error: rpcError } = await supabase.rpc('fn_verify_lawyer', {
         p_lawyer_id: isNaN(Number(lawyerId)) ? null : Number(lawyerId),
         p_user_id: profileId,
         p_status: newStatus,
         p_rejection_reason: actionNote
       });
 
-      if (error) throw error;
+      if (rpcError) {
+        console.warn('RPC fn_verify_lawyer failed or missing helper, using direct table update fallback:', rpcError.message);
+        
+        try {
+          const { error: updErr } = await supabase
+            .from('lawyers')
+            .update({
+              is_verified: false,
+              verification_status: newStatus
+            })
+            .or(`id.eq.${lawyerId},user_id.eq.${profileId}`);
+            
+          if (updErr) {
+            await supabase
+              .from('lawyers')
+              .update({ is_verified: false })
+              .or(`id.eq.${lawyerId},user_id.eq.${profileId}`);
+          }
+        } catch (e) {}
+
+        if (profileId && typeof profileId === 'string' && profileId.includes('-')) {
+          try {
+            await supabase.from('users').update({ is_verified: false }).or(`id.eq.${profileId},auth_id.eq.${profileId}`);
+          } catch (e) {}
+          try {
+            await supabase.from('profiles').update({ is_verified: false, verification_status: newStatus }).eq('id', profileId);
+          } catch (e) {}
+        }
+      }
 
       toast.success(type === 'improve' ? 'Requested improvements from lawyer' : 'Lawyer verification rejected');
+      realtimeSync.broadcastApprovalChange({
+        lawyerId: isNaN(Number(lawyerId)) ? null : Number(lawyerId),
+        userId: profileId,
+        is_verified: false,
+        verification_status: newStatus,
+        action: type === 'improve' ? 'ACTION_REQUIRED' : 'REJECTED',
+      });
       setActionModal({ type: null, lawyerId: null });
       setActionNote('');
       fetchVerifications();

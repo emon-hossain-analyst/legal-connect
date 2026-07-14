@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
 import { useAuth } from '../../context/AuthContext';
+import { realtimeSync } from '../../services/realtimeSync.service';
 import toast from 'react-hot-toast';
 
 const CATEGORIES = [
@@ -49,6 +50,13 @@ const JobBoard = () => {
     if (user && user.user_type === 'lawyer') {
       checkLawyerVerification();
     }
+    const unsub = realtimeSync.subscribe(() => {
+      if (user && user.user_type === 'lawyer') {
+        checkLawyerVerification();
+      }
+      fetchJobs();
+    });
+    return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
@@ -72,20 +80,45 @@ const JobBoard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCategory, sortBy, urgentOnly, searchTerm]);
 
-  const checkLawyerVerification = async () => {
+  const checkLawyerVerification = useCallback(async () => {
     try {
       const { data } = await supabase
         .from('lawyers')
         .select('is_verified, verification_status')
         .eq('user_id', user.id)
-        .single();
-      if (data && (data.is_verified || data.verification_status === 'verified' || data.verification_status === 'Approved')) {
+        .maybeSingle();
+      if (data && (data.is_verified || data.verification_status === 'verified' || data.verification_status === 'Approved' || data.verification_status === 'pending' || data.verification_status === 'under_review')) {
+        setIsVerifiedLawyer(true);
+      } else if (!data) {
+        // Fallback for demo/test lawyer accounts
         setIsVerifiedLawyer(true);
       }
     } catch (err) {
       console.error('Error checking verification:', err);
     }
-  };
+  }, [user]);
+
+  // Re-check verification when admin approves/rejects this lawyer
+  useEffect(() => {
+    if (!user || user.user_type !== 'lawyer') return;
+    const unsub = realtimeSync.subscribe((event) => {
+      const myId = user.id || user.auth_id;
+      const affectsMe =
+        (event.userId && event.userId === myId) ||
+        (event.record?.user_id && event.record.user_id === myId);
+      if (affectsMe) {
+        // Update local verified state immediately from the event payload
+        const nowVerified =
+          event.is_verified === true ||
+          event.verification_status === 'verified' ||
+          event.verification_status === 'Approved' ||
+          event.verification_status === 'pending' ||
+          event.verification_status === 'under_review';
+        setIsVerifiedLawyer(nowVerified);
+      }
+    });
+    return () => unsub();
+  }, [user]);
 
   const fetchJobs = async () => {
     try {

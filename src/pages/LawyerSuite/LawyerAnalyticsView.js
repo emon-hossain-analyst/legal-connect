@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../services/supabase';
 import { useAuth } from '../../context/AuthContext';
 
@@ -8,261 +8,279 @@ const LawyerAnalyticsView = () => {
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState('30days');
 
-  useEffect(() => {
-    if (!user) return;
-    const fetchAnalytics = async () => {
+  const fetchAnalytics = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      setLoading(true);
+      const userIds = [...new Set([user.id, user.auth_id].filter(Boolean))];
+
+      // Resolve lawyer record
+      let lawyerRecord = null;
       try {
-        const { data: statsData } = await supabase
-          .from('analytics_stats')
-          .select('*')
-          .eq('lawyer_id', user.id)
-          .single();
-        
-        if (statsData) setStats(statsData);
-      } catch (err) {
-        console.error('Error fetching analytics:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchAnalytics();
-  }, [user]);
+        const { data } = await supabase.from('lawyers').select('*').in('user_id', userIds).maybeSingle();
+        lawyerRecord = data;
+      } catch (e) {}
 
-  if (loading) return <div className="p-8 text-center animate-pulse">Loading analytics...</div>;
+      // Date filter
+      const now = new Date();
+      let since = new Date();
+      if (dateRange === '7days') since.setDate(now.getDate() - 7);
+      else if (dateRange === '30days') since.setDate(now.getDate() - 30);
+      else since.setFullYear(now.getFullYear() - 1);
+      const sinceISO = since.toISOString();
 
-  // Use real data where possible, with fallbacks to realistic data for the UI
-  const profileViews = stats ? stats.total_cases * 42 : 2842;
-  const appointments = stats ? stats.total_cases : 48;
-  const conversionRate = stats ? stats.success_rate : 6.4;
-  const earnings = stats ? stats.total_earnings : 145200;
+      // Fetch real counts in parallel
+      const [
+        { count: totalAppointments },
+        { count: activeAppointments },
+        { count: totalCases },
+        { count: completedCases },
+        { count: totalProposals },
+        { count: acceptedProposals },
+        { data: paymentsData },
+        { data: reviewsData },
+      ] = await Promise.all([
+        supabase.from('appointments').select('*', { count: 'exact', head: true })
+          .in('lawyer_id', userIds).gte('created_at', sinceISO),
+        supabase.from('appointments').select('*', { count: 'exact', head: true })
+          .in('lawyer_id', userIds).in('status', ['confirmed', 'Upcoming', 'In Progress']),
+        supabase.from('cases').select('*', { count: 'exact', head: true })
+          .in('lawyer_id', userIds).gte('created_at', sinceISO),
+        supabase.from('cases').select('*', { count: 'exact', head: true })
+          .in('lawyer_id', userIds).in('status', ['Completed', 'completed', 'Closed', 'closed']),
+        supabase.from('job_proposals').select('*', { count: 'exact', head: true })
+          .in('lawyer_id', userIds).gte('created_at', sinceISO),
+        supabase.from('job_proposals').select('*', { count: 'exact', head: true })
+          .in('lawyer_id', userIds).eq('status', 'accepted'),
+        supabase.from('payments').select('amount, status, created_at')
+          .in('lawyer_id', userIds).gte('created_at', sinceISO),
+        supabase.from('reviews').select('rating, created_at')
+          .eq('reviewee_id', user.id).gte('created_at', sinceISO),
+      ]);
+
+      const totalEarnings = (paymentsData || [])
+        .filter(p => p.status === 'completed' || p.status === 'released')
+        .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+
+      const avgRating = reviewsData && reviewsData.length > 0
+        ? (reviewsData.reduce((s, r) => s + r.rating, 0) / reviewsData.length).toFixed(1)
+        : (lawyerRecord?.avg_rating || lawyerRecord?.rating || 0);
+
+      const conversionRate = totalProposals > 0
+        ? ((acceptedProposals / totalProposals) * 100).toFixed(1)
+        : 0;
+
+      const successRate = totalCases > 0
+        ? ((completedCases / totalCases) * 100).toFixed(1)
+        : 0;
+
+      setStats({
+        totalAppointments: totalAppointments || 0,
+        activeAppointments: activeAppointments || 0,
+        totalCases: totalCases || 0,
+        completedCases: completedCases || 0,
+        totalProposals: totalProposals || 0,
+        acceptedProposals: acceptedProposals || 0,
+        totalEarnings,
+        avgRating,
+        conversionRate,
+        successRate,
+        reviewCount: reviewsData?.length || 0,
+        profileStrength: lawyerRecord ? computeProfileStrength(lawyerRecord) : 0,
+      });
+    } catch (err) {
+      console.error('Analytics fetch error:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.id, user?.auth_id, dateRange]);
+
+  useEffect(() => { fetchAnalytics(); }, [fetchAnalytics]);
+
+  const computeProfileStrength = (lawyer) => {
+    let score = 0;
+    if (lawyer.profile_picture_url) score += 20;
+    if (lawyer.bio || lawyer.about) score += 20;
+    if (lawyer.specialization) score += 15;
+    if (lawyer.bar_council_number) score += 15;
+    if (lawyer.experience_years) score += 15;
+    if (lawyer.education) score += 15;
+    return score;
+  };
+
+  if (loading) return (
+    <div className="p-8 flex items-center justify-center min-h-[400px]">
+      <div className="text-center space-y-3">
+        <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+        <p className="text-sm font-bold text-gray-500">Loading analytics...</p>
+      </div>
+    </div>
+  );
 
   return (
     <div className="p-4 md:p-8 max-w-container-max mx-auto animate-fadeIn space-y-6">
-      
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-outline-variant pb-4">
         <div>
           <h2 className="font-headline-md text-3xl text-primary font-bold">Performance Insights</h2>
-          <p className="text-on-surface-variant font-body-md mt-1">Real-time overview of your professional reach and engagement.</p>
+          <p className="text-on-surface-variant font-body-md mt-1">Live overview of your professional reach and engagement.</p>
         </div>
         <div className="flex gap-2 text-sm font-bold">
-          <button 
-            onClick={() => setDateRange('7days')}
-            className={`px-4 py-2 rounded-full transition-colors ${dateRange === '7days' ? 'bg-primary text-white' : 'text-on-surface-variant hover:bg-surface-container'}`}
-          >
-            Last 7 Days
-          </button>
-          <button 
-            onClick={() => setDateRange('30days')}
-            className={`px-4 py-2 rounded-full transition-colors ${dateRange === '30days' ? 'bg-primary text-white' : 'text-on-surface-variant hover:bg-surface-container'}`}
-          >
-            Last 30 Days
-          </button>
-          <button 
-            onClick={() => setDateRange('custom')}
-            className={`px-4 py-2 rounded-full transition-colors ${dateRange === 'custom' ? 'bg-primary text-white' : 'text-on-surface-variant hover:bg-surface-container'}`}
-          >
-            Custom Range
-          </button>
+          {[
+            { id: '7days', label: 'Last 7 Days' },
+            { id: '30days', label: 'Last 30 Days' },
+            { id: 'year', label: 'This Year' },
+          ].map(r => (
+            <button
+              key={r.id}
+              onClick={() => setDateRange(r.id)}
+              className={`px-4 py-2 rounded-full transition-colors ${dateRange === r.id ? 'bg-primary text-white' : 'text-on-surface-variant hover:bg-surface-container'}`}
+            >
+              {r.label}
+            </button>
+          ))}
         </div>
       </div>
 
       {/* Metrics Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        
-        {/* Profile Views */}
-        <div className="bg-surface-container-lowest p-6 rounded-xl border border-outline-variant shadow-sm flex flex-col justify-between">
-          <div className="flex justify-between items-start mb-6">
-            <div className="p-3 bg-surface-container rounded-lg text-primary">
-              <span className="material-symbols-outlined">visibility</span>
-            </div>
-            <span className="text-emerald-500 text-sm font-bold flex items-center gap-1">+12% <span className="material-symbols-outlined text-sm">arrow_upward</span></span>
-          </div>
-          <div>
-            <p className="text-on-surface-variant text-label-md font-bold uppercase tracking-widest mb-1">Profile Views</p>
-            <p className="text-headline-md text-3xl font-bold text-primary">{profileViews.toLocaleString()}</p>
-          </div>
-        </div>
-
-        {/* Appointments */}
-        <div className="bg-surface-container-lowest p-6 rounded-xl border border-outline-variant shadow-sm flex flex-col justify-between">
-          <div className="flex justify-between items-start mb-6">
-            <div className="p-3 bg-secondary-fixed text-on-secondary-fixed rounded-lg">
-              <span className="material-symbols-outlined">event</span>
-            </div>
-            <span className="text-emerald-500 text-sm font-bold flex items-center gap-1">+5% <span className="material-symbols-outlined text-sm">arrow_upward</span></span>
-          </div>
-          <div>
-            <p className="text-on-surface-variant text-label-md font-bold uppercase tracking-widest mb-1">Appointments</p>
-            <p className="text-headline-md text-3xl font-bold text-primary">{appointments}</p>
-          </div>
-        </div>
-
-        {/* Conversion Rate */}
-        <div className="bg-surface-container-lowest p-6 rounded-xl border border-outline-variant shadow-sm flex flex-col justify-between">
-          <div className="flex justify-between items-start mb-6">
-            <div className="p-3 bg-surface-container rounded-lg text-primary">
-              <span className="material-symbols-outlined">percent</span>
-            </div>
-            <span className="text-error text-sm font-bold flex items-center gap-1">-2% <span className="material-symbols-outlined text-sm">arrow_downward</span></span>
-          </div>
-          <div>
-            <p className="text-on-surface-variant text-label-md font-bold uppercase tracking-widest mb-1">Conversion Rate</p>
-            <p className="text-headline-md text-3xl font-bold text-primary">{conversionRate}%</p>
-          </div>
-        </div>
-
-        {/* Monthly Earnings */}
-        <div className="bg-surface-container-lowest p-6 rounded-xl border border-outline-variant shadow-sm flex flex-col justify-between">
-          <div className="flex justify-between items-start mb-6">
-            <div className="p-3 bg-surface-container rounded-lg text-secondary">
-              <span className="material-symbols-outlined">payments</span>
-            </div>
-            <span className="text-emerald-500 text-sm font-bold flex items-center gap-1">+18% <span className="material-symbols-outlined text-sm">arrow_upward</span></span>
-          </div>
-          <div>
-            <p className="text-on-surface-variant text-label-md font-bold uppercase tracking-widest mb-1">Monthly Earnings</p>
-            <p className="text-headline-md text-3xl font-bold text-primary">৳ {earnings.toLocaleString()}</p>
-          </div>
-        </div>
-
+        <MetricCard
+          label="Appointments"
+          value={stats?.totalAppointments ?? 0}
+          sub={`${stats?.activeAppointments ?? 0} active`}
+          icon="event"
+          iconBg="bg-secondary-fixed text-on-secondary-fixed"
+        />
+        <MetricCard
+          label="Total Cases"
+          value={stats?.totalCases ?? 0}
+          sub={`${stats?.completedCases ?? 0} completed`}
+          icon="folder_shared"
+          iconBg="bg-surface-container text-primary"
+        />
+        <MetricCard
+          label="Conversion Rate"
+          value={`${stats?.conversionRate ?? 0}%`}
+          sub={`${stats?.acceptedProposals ?? 0} of ${stats?.totalProposals ?? 0} proposals`}
+          icon="percent"
+          iconBg="bg-surface-container text-primary"
+        />
+        <MetricCard
+          label="Total Earnings"
+          value={`৳ ${(stats?.totalEarnings ?? 0).toLocaleString()}`}
+          sub="Released payments"
+          icon="payments"
+          iconBg="bg-surface-container text-secondary"
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-        
-        {/* Visitor & Inquiry Trends Chart */}
-        <div className="lg:col-span-2 bg-surface-container-lowest p-6 rounded-xl border border-outline-variant shadow-sm h-full">
-          <div className="flex justify-between items-start mb-6">
-            <div>
-              <h3 className="font-bold text-primary text-lg">Visitor & Inquiry Trends</h3>
-              <div className="flex gap-4 mt-2">
-                <div className="flex items-center gap-2 text-sm">
-                  <div className="w-3 h-3 rounded-full bg-primary"></div> Profile Views
-                </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <div className="w-3 h-3 rounded-full bg-secondary-fixed"></div> Inquiries
-                </div>
-              </div>
-            </div>
-            <button className="text-on-surface-variant hover:bg-surface-container p-1 rounded-full"><span className="material-symbols-outlined">more_vert</span></button>
+        {/* Performance Summary */}
+        <div className="lg:col-span-2 bg-surface-container-lowest p-6 rounded-xl border border-outline-variant shadow-sm">
+          <h3 className="font-bold text-primary text-lg mb-6">Performance Summary</h3>
+          <div className="space-y-5">
+            <ProgressRow label="Case Success Rate" value={stats?.successRate ?? 0} color="bg-primary" />
+            <ProgressRow label="Proposal Acceptance Rate" value={stats?.conversionRate ?? 0} color="bg-secondary" />
+            <ProgressRow label="Profile Strength" value={stats?.profileStrength ?? 0} color="bg-on-tertiary-container" />
           </div>
-          <div className="relative w-full h-[250px] mt-8 flex items-end">
-            <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 100">
-              <path d="M0,70 Q15,60 30,50 T60,50 T80,30 T100,50" fill="none" className="stroke-primary" strokeWidth="1.5"/>
-              <path d="M0,90 Q20,95 40,75 T70,60 T100,70" fill="none" className="stroke-secondary-fixed" strokeWidth="1.5"/>
-              {/* Background gradient for the lower chart area */}
-              <path d="M0,90 Q20,95 40,75 T70,60 T100,70 L100,100 L0,100 Z" fill="rgba(255, 224, 143, 0.1)"/>
-            </svg>
-            <div className="absolute inset-0 border-b-2 border-outline-variant/30 top-1/2"></div>
-            {/* Axis Labels */}
-            <div className="absolute bottom-[-24px] left-0 w-full flex justify-between text-xs text-on-surface-variant font-bold">
-              <span>01 May</span>
-              <span>07 May</span>
-              <span>14 May</span>
-              <span>21 May</span>
-              <span>28 May</span>
+
+          <div className="mt-8 grid grid-cols-2 gap-4 pt-6 border-t border-outline-variant">
+            <div className="text-center">
+              <p className="text-3xl font-bold text-primary">{stats?.avgRating || 'N/A'}</p>
+              <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider mt-1">Avg Rating</p>
+              <p className="text-xs text-gray-400">{stats?.reviewCount || 0} reviews</p>
+            </div>
+            <div className="text-center">
+              <p className="text-3xl font-bold text-primary">{stats?.completedCases ?? 0}</p>
+              <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider mt-1">Cases Completed</p>
+              <p className="text-xs text-gray-400">All time</p>
             </div>
           </div>
         </div>
 
         {/* Profile Strength */}
-        <div className="bg-primary text-white rounded-xl shadow-lg h-full p-8 flex flex-col justify-between relative overflow-hidden">
+        <div className="bg-primary text-white rounded-xl shadow-lg p-8 flex flex-col justify-between relative overflow-hidden">
           <div className="text-center relative z-10">
             <h3 className="font-bold text-secondary-fixed text-lg mb-6">Profile Strength</h3>
             <div className="relative w-32 h-32 mx-auto mb-6 flex items-center justify-center">
               <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
                 <circle cx="50" cy="50" r="40" className="stroke-white/10 fill-none" strokeWidth="8" />
-                <circle cx="50" cy="50" r="40" className="stroke-secondary-fixed fill-none" strokeWidth="8" strokeDasharray="251.2" strokeDashoffset="55.2" strokeLinecap="round" />
+                <circle cx="50" cy="50" r="40" className="stroke-secondary-fixed fill-none" strokeWidth="8"
+                  strokeDasharray="251.2"
+                  strokeDashoffset={251.2 - (251.2 * (stats?.profileStrength ?? 0) / 100)}
+                  strokeLinecap="round" />
               </svg>
               <div className="absolute flex flex-col items-center">
-                <span className="text-3xl font-bold text-white leading-none">78%</span>
+                <span className="text-3xl font-bold text-white leading-none">{stats?.profileStrength ?? 0}%</span>
                 <span className="text-[10px] uppercase tracking-widest text-on-primary-container mt-1">Complete</span>
               </div>
             </div>
           </div>
-          
-          <div className="space-y-3 relative z-10 mb-8">
-            <div className="flex items-center gap-3 text-sm">
-              <span className="material-symbols-outlined text-secondary-fixed text-lg filled-icon">check_circle</span> Professional Headshot
-            </div>
-            <div className="flex items-center gap-3 text-sm">
-              <span className="material-symbols-outlined text-secondary-fixed text-lg filled-icon">check_circle</span> Executive Biography
-            </div>
-            <div className="flex items-center gap-3 text-sm">
-              <span className="material-symbols-outlined text-secondary-fixed text-lg filled-icon">check_circle</span> Academic Credentials
-            </div>
-            <div className="flex items-center gap-3 text-sm text-on-primary-container">
-              <span className="material-symbols-outlined text-on-primary-container text-lg">radio_button_unchecked</span> Case Studies (min 3)
-            </div>
-            <div className="flex items-center gap-3 text-sm text-on-primary-container">
-              <span className="material-symbols-outlined text-on-primary-container text-lg">radio_button_unchecked</span> Client Video Testimonial
-            </div>
-          </div>
-          
-          <button className="w-full py-3 rounded-lg border border-secondary-fixed text-secondary-fixed font-bold hover:bg-secondary-fixed hover:text-on-secondary-fixed transition-colors relative z-10">
-            Improve Profile
-          </button>
-        </div>
-
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-12">
-        
-        {/* Traffic Sources */}
-        <div className="bg-surface-container-lowest p-6 rounded-xl border border-outline-variant shadow-sm">
-          <h3 className="font-bold text-primary mb-6">Traffic Sources</h3>
-          <div className="space-y-5">
-            <div>
-              <div className="flex justify-between text-sm mb-2">
-                <span className="text-on-surface-variant font-medium">LegalConnect Search</span>
-                <span className="font-bold text-primary">65%</span>
-              </div>
-              <div className="h-2 bg-surface-container rounded-full overflow-hidden">
-                <div className="h-full bg-primary" style={{ width: '65%' }}></div>
-              </div>
-            </div>
-            <div>
-              <div className="flex justify-between text-sm mb-2">
-                <span className="text-on-surface-variant font-medium">Direct Profile Link</span>
-                <span className="font-bold text-primary">20%</span>
-              </div>
-              <div className="h-2 bg-surface-container rounded-full overflow-hidden">
-                <div className="h-full bg-outline-variant" style={{ width: '20%' }}></div>
-              </div>
-            </div>
-            <div>
-              <div className="flex justify-between text-sm mb-2">
-                <span className="text-on-surface-variant font-medium">Referral Sites</span>
-                <span className="font-bold text-primary">15%</span>
-              </div>
-              <div className="h-2 bg-surface-container rounded-full overflow-hidden">
-                <div className="h-full bg-surface-dim" style={{ width: '15%' }}></div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Pro Tip */}
-        <div className="bg-surface-container p-6 rounded-xl border border-outline-variant shadow-sm flex flex-col justify-between relative overflow-hidden">
-          <div className="relative z-10">
-            <h3 className="font-bold text-primary text-lg mb-2">Pro Tip: Boost Visibility</h3>
-            <p className="text-on-surface-variant text-sm leading-relaxed mb-6">
-              Updating your availability calendar twice a week increases your appearance in 'Available Now' searches by 2.4x.
+          <div className="space-y-3 relative z-10">
+            <p className="text-xs text-on-primary-container leading-relaxed">
+              Complete your profile to increase visibility in search results and attract more clients.
             </p>
-          </div>
-          <button className="bg-primary text-white font-bold py-3 px-6 rounded-lg w-fit hover:bg-primary-fixed-variant transition-colors relative z-10">
-            Manage Availability
-          </button>
-          {/* Decorative graphic in background */}
-          <div className="absolute -right-6 -bottom-6 opacity-5">
-            <span className="material-symbols-outlined text-[150px]">calendar_month</span>
+            <button
+              onClick={() => window.location.href = '/lawyer-suite/profile'}
+              className="w-full py-3 rounded-lg border border-secondary-fixed text-secondary-fixed font-bold hover:bg-secondary-fixed hover:text-on-secondary-fixed transition-colors"
+            >
+              Improve Profile
+            </button>
           </div>
         </div>
-
       </div>
 
+      {/* Earnings Summary */}
+      <div className="bg-primary-container text-white p-8 rounded-xl shadow-lg relative overflow-hidden">
+        <div className="flex flex-col md:flex-row items-center justify-between gap-8 relative z-10">
+          <div className="space-y-2 text-center md:text-left">
+            <h3 className="font-headline-md text-headline-md text-secondary-fixed font-bold">Earnings Summary</h3>
+            <p className="text-on-primary-container text-body-sm">Period: {dateRange === '7days' ? 'Last 7 days' : dateRange === '30days' ? 'Last 30 days' : 'This year'}</p>
+            <div className="pt-4">
+              <span className="text-display-lg font-display-lg">৳ {(stats?.totalEarnings ?? 0).toLocaleString()}</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-6 text-center">
+            <div>
+              <p className="text-2xl font-bold text-white">{stats?.totalProposals ?? 0}</p>
+              <p className="text-xs text-on-primary-container">Proposals Sent</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-white">{stats?.acceptedProposals ?? 0}</p>
+              <p className="text-xs text-on-primary-container">Proposals Accepted</p>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
+
+const MetricCard = ({ label, value, sub, icon, iconBg }) => (
+  <div className="bg-surface-container-lowest p-6 rounded-xl border border-outline-variant shadow-sm flex flex-col justify-between">
+    <div className="flex justify-between items-start mb-6">
+      <div className={`p-3 rounded-lg ${iconBg}`}>
+        <span className="material-symbols-outlined">{icon}</span>
+      </div>
+    </div>
+    <div>
+      <p className="text-on-surface-variant text-label-md font-bold uppercase tracking-widest mb-1">{label}</p>
+      <p className="text-headline-md text-3xl font-bold text-primary">{value}</p>
+      {sub && <p className="text-xs text-gray-400 mt-1">{sub}</p>}
+    </div>
+  </div>
+);
+
+const ProgressRow = ({ label, value, color }) => (
+  <div>
+    <div className="flex justify-between text-sm mb-2">
+      <span className="text-on-surface-variant font-medium">{label}</span>
+      <span className="font-bold text-primary">{value}%</span>
+    </div>
+    <div className="h-2 bg-surface-container rounded-full overflow-hidden">
+      <div className={`h-full ${color} rounded-full transition-all duration-700`} style={{ width: `${Math.min(100, value)}%` }} />
+    </div>
+  </div>
+);
 
 export default LawyerAnalyticsView;

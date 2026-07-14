@@ -1,770 +1,1287 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase';
 import toast from 'react-hot-toast';
 
+// Reusable Components
+import CaseSummaryCards from '../../components/LawyerCaseTracking/CaseSummaryCards';
+import CaseSearchBar from '../../components/LawyerCaseTracking/CaseSearchBar';
+import CaseFilters from '../../components/LawyerCaseTracking/CaseFilters';
+import CaseCard from '../../components/LawyerCaseTracking/CaseCard';
+import TimelineCard from '../../components/LawyerCaseTracking/TimelineCard';
+import ContractInfo from '../../components/LawyerCaseTracking/ContractInfo';
+import ClientInfo from '../../components/LawyerCaseTracking/ClientInfo';
+import PaymentSummary from '../../components/LawyerCaseTracking/PaymentSummary';
+import UpcomingEvents from '../../components/LawyerCaseTracking/UpcomingEvents';
+import EmptyState from '../../components/LawyerCaseTracking/EmptyState';
+import LoadingSkeleton from '../../components/LawyerCaseTracking/LoadingSkeleton';
+import Pagination from '../../components/LawyerCaseTracking/Pagination';
+import CaseStatusBadge from '../../components/LawyerCaseTracking/CaseStatusBadge';
+
 const LawyerCasesView = () => {
   const navigate = useNavigate();
   const { caseId } = useParams();
   const { user } = useAuth();
-  
+
+  // Primary State
   const [cases, setCases] = useState([]);
   const [documents, setDocuments] = useState([]);
+  const [payments, setPayments] = useState([]);
+  const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [caseFilter, setCaseFilter] = useState('All');
+
+  // Search, Filter, Sort, Pagination State
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filters, setFilters] = useState({
+    status: 'All',
+    practiceArea: 'All',
+    dateRange: 'All',
+    sortBy: 'Newest',
+  });
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
+
+  // Selected Case & Modal/Drawer State
   const [selectedCase, setSelectedCase] = useState(null);
+  const [drawerTab, setDrawerTab] = useState('overview'); // overview | timeline | contract | client | documents
+  const [isCompleting, setIsCompleting] = useState(false);
 
-  useEffect(() => {
-    if (caseId && cases.length > 0) {
-      const found = cases.find(c => String(c.id) === String(caseId) || String(c.linked_appointment_id) === String(caseId));
-      if (found) setSelectedCase(found);
-    }
-  }, [caseId, cases]);
-
-  // Milestone states
+  // Milestone Add State inside Drawer
   const [milestones, setMilestones] = useState([]);
   const [milestoneLoading, setMilestoneLoading] = useState(false);
-  const [drawerTab, setDrawerTab] = useState('timeline');
-  const [newMilestone, setNewMilestone] = useState({ title: '', description: '', milestone_fee: '' });
+  const [newMilestone, setNewMilestone] = useState({ title: '', description: '', milestone_fee: '', due_date: '' });
   const [submittingMilestone, setSubmittingMilestone] = useState(false);
 
-  useEffect(() => {
-    if (!user?.id) return;
-    
-    fetchCasesData();
+  // Document Upload State
+  const [uploadingDoc, setUploadingDoc] = useState(false);
 
-    // Set up realtime subscriptions for live data updates
-    const channel = supabase.channel(`lawyer_cases_realtime_${user.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'cases' }, (payload) => {
-        fetchCasesData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'contracts' }, (payload) => {
-        fetchCasesData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, (payload) => {
-        fetchCasesData();
-      })
-      .subscribe();
+  // Contract Workflow State
+  const [contractAction, setContractAction] = useState(null);
+  const [progressTitle, setProgressTitle] = useState('');
+  const [progressNote, setProgressNote] = useState('');
+  const [reviewNote, setReviewNote] = useState('');
+  const [submittingContractAction, setSubmittingContractAction] = useState(false);
+  const [contractTimeline, setContractTimeline] = useState([]);
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  // 1. Secure & Validated Data Fetching
+  const fetchCasesData = useCallback(async () => {
+    // Check if user exists and valid UUID/id is present before any database query
+    const rawAuthId = user?.id || user?.auth_id;
+    if (!rawAuthId || rawAuthId === 'undefined') {
+      setLoading(false);
+      return;
+    }
 
-  const fetchCasesData = async () => {
     try {
       setLoading(true);
+      setError(null);
+
       const rawUserIds = [...new Set([user?.id, user?.auth_id].filter(Boolean))];
       if (rawUserIds.length === 0) {
         setCases([]);
-        setDocuments([]);
         setLoading(false);
         return;
       }
 
-      const uuidList = rawUserIds.filter(id => isNaN(Number(id)));
+      const uuidList = rawUserIds.filter((id) => typeof id === 'string' && id.includes('-'));
       let intList = [];
 
-      // Get lawyer Integer IDs safely
+      // Resolve integer IDs if lawyer table uses serial/int
       if (uuidList.length > 0) {
         try {
-          const { data: lRes } = await supabase
-            .from('lawyers')
-            .select('id')
-            .in('user_id', uuidList);
-          if (lRes) {
-            intList = lRes.map(l => l.id).filter(Boolean);
+          const { data: lRes } = await supabase.from('lawyers').select('id').in('user_id', uuidList);
+          if (lRes && lRes.length > 0) {
+            intList = lRes.map((l) => l.id).filter(Boolean);
           }
-        } catch (lErr) {}
+        } catch (lErr) {
+          console.warn('Lawyer integer ID resolution note:', lErr.message);
+        }
       }
 
       let casesData = [];
       let contractsData = [];
       let appointmentsData = [];
+      let paymentsData = [];
 
-      // Fetch using UUIDs
+      // Fetch by UUIDs safely
       if (uuidList.length > 0) {
         try {
-          const { data } = await supabase.from('cases').select('*, client:users!cases_client_id_fkey(id, name, profile_picture_url), case_progress(*)').in('lawyer_id', uuidList).order('updated_at', { ascending: false });
+          const { data } = await supabase
+            .from('cases')
+            .select('*, client:users!cases_client_id_fkey(id, name, full_name, email, profile_picture_url), case_milestones(*)')
+            .in('lawyer_id', uuidList)
+            .order('updated_at', { ascending: false });
           if (data) casesData = [...casesData, ...data];
-        } catch(e) {}
-        
-        try {
-          const { data } = await supabase.from('contracts').select('*, client:users!contracts_client_id_fkey(id, name, profile_picture_url)').in('lawyer_id', uuidList);
-          if (data) contractsData = [...contractsData, ...data];
-        } catch(e) {}
+        } catch (e) {
+          // Fallback if relation name differs
+          try {
+            const { data: fbData } = await supabase
+              .from('cases')
+              .select('*')
+              .in('lawyer_id', uuidList)
+              .order('updated_at', { ascending: false });
+            if (fbData) casesData = [...casesData, ...fbData];
+          } catch (e2) {}
+        }
 
         try {
-          const { data } = await supabase.from('appointments').select('*, client:users!appointments_client_id_fkey(id, name, profile_picture_url)').in('lawyer_id', uuidList).in('status', ['confirmed', 'active', 'Upcoming', 'In Progress', 'pending_negotiation']);
+          const { data } = await supabase
+            .from('contracts')
+            .select('*, client:users!contracts_client_id_fkey(id, name, full_name, email, profile_picture_url), job_post:job_posts(*)')
+            .in('lawyer_id', uuidList);
+          if (data) contractsData = [...contractsData, ...data];
+        } catch (e) {
+          try {
+            const { data: fbCnt } = await supabase.from('contracts').select('*').in('lawyer_id', uuidList);
+            if (fbCnt) contractsData = [...contractsData, ...fbCnt];
+          } catch (e2) {}
+        }
+
+        try {
+          const { data } = await supabase
+            .from('appointments')
+            .select('*, client:users!appointments_client_id_fkey(id, name, full_name, email, profile_picture_url)')
+            .in('lawyer_id', uuidList)
+            .in('status', ['confirmed', 'active', 'Upcoming', 'In Progress', 'pending_negotiation', 'completed']);
           if (data) appointmentsData = [...appointmentsData, ...data];
-        } catch(e) {}
+        } catch (e) {}
+
+        try {
+          const { data } = await supabase.from('payments').select('*').in('lawyer_id', uuidList);
+          if (data) paymentsData = [...paymentsData, ...data];
+        } catch (e) {}
       }
 
-      // Fetch using Integers
+      // Fetch by Integers safely
       if (intList.length > 0) {
         try {
-          const { data } = await supabase.from('cases').select('*, client:users!cases_client_id_fkey(id, name, profile_picture_url), case_progress(*)').in('lawyer_id', intList).order('updated_at', { ascending: false });
+          const { data } = await supabase
+            .from('cases')
+            .select('*, client:users!cases_client_id_fkey(id, name, full_name, email, profile_picture_url), case_milestones(*)')
+            .in('lawyer_id', intList)
+            .order('updated_at', { ascending: false });
           if (data) casesData = [...casesData, ...data];
-        } catch(e) {}
-        
+        } catch (e) {
+          try {
+            const { data: fbData } = await supabase
+              .from('cases')
+              .select('*')
+              .in('lawyer_id', intList)
+              .order('updated_at', { ascending: false });
+            if (fbData) casesData = [...casesData, ...fbData];
+          } catch (e2) {}
+        }
+
         try {
-          const { data } = await supabase.from('contracts').select('*, client:users!contracts_client_id_fkey(id, name, profile_picture_url)').in('lawyer_id', intList);
+          const { data } = await supabase
+            .from('contracts')
+            .select('*, client:users!contracts_client_id_fkey(id, name, full_name, email, profile_picture_url), job_post:job_posts(*)')
+            .in('lawyer_id', intList);
           if (data) contractsData = [...contractsData, ...data];
-        } catch(e) {}
+        } catch (e) {
+          try {
+            const { data: fbCnt } = await supabase.from('contracts').select('*').in('lawyer_id', intList);
+            if (fbCnt) contractsData = [...contractsData, ...fbCnt];
+          } catch (e2) {}
+        }
 
         try {
-          const { data } = await supabase.from('appointments').select('*, client:users!appointments_client_id_fkey(id, name, profile_picture_url)').in('lawyer_id', intList).in('status', ['confirmed', 'active', 'Upcoming', 'In Progress', 'pending_negotiation']);
+          const { data } = await supabase
+            .from('appointments')
+            .select('*, client:users!appointments_client_id_fkey(id, name, full_name, email, profile_picture_url)')
+            .in('lawyer_id', intList)
+            .in('status', ['confirmed', 'active', 'Upcoming', 'In Progress', 'pending_negotiation', 'completed']);
           if (data) appointmentsData = [...appointmentsData, ...data];
-        } catch(e) {}
+        } catch (e) {}
+
+        try {
+          const { data } = await supabase.from('payments').select('*').in('lawyer_id', intList);
+          if (data) paymentsData = [...paymentsData, ...data];
+        } catch (e) {}
       }
 
-      // Fallbacks if relational queries failed
-      if (casesData.length === 0) {
-        try {
-           const { data } = await supabase.from('cases').select('*').in('lawyer_id', rawUserIds).order('updated_at', { ascending: false });
-           if (data) casesData = data;
-        } catch(e) {}
-      }
-      
-      if (appointmentsData.length === 0) {
-        try {
-           const { data } = await supabase.from('appointments').select('*').in('lawyer_id', rawUserIds).in('status', ['confirmed', 'active', 'Upcoming', 'In Progress', 'pending_negotiation']);
-           if (data) appointmentsData = data;
-        } catch(e) {}
-      }
-
+      // Merge into deduplicated map
       const mergedMap = new Map();
-      if (casesData) {
-        casesData.forEach(c => mergedMap.set(String(c.id), c));
+
+      if (Array.isArray(casesData)) {
+        casesData.forEach((c) => {
+          // Ignore rejected items
+          if (String(c.status).toLowerCase() !== 'rejected') {
+            mergedMap.set(String(c.id), c);
+          }
+        });
       }
 
-      if (contractsData) {
-        contractsData.forEach(cnt => {
+      if (Array.isArray(contractsData)) {
+        contractsData.forEach((cnt) => {
+          if (String(cnt.status).toLowerCase() === 'rejected') return;
+
           if (cnt.case_id && mergedMap.has(String(cnt.case_id))) {
             const existing = mergedMap.get(String(cnt.case_id));
             existing.contract = cnt;
-            existing.agreed_fee = cnt.amount || cnt.agreed_amount;
-            existing.outstanding_balance = cnt.outstanding_balance;
+            existing.agreed_fee = cnt.amount || cnt.agreed_amount || existing.agreed_fee;
+            existing.job_post = cnt.job_post || existing.job_post;
+            if (cnt.client && !existing.client?.name) existing.client = cnt.client;
           } else if (!cnt.case_id || !mergedMap.has(String(cnt.case_id))) {
             const synthId = cnt.case_id || `contract_${cnt.id}`;
             mergedMap.set(String(synthId), {
               id: synthId,
-              title: cnt.title || 'Legal Contract Matter',
-              description: cnt.terms || 'Contract representation matter.',
-              status: cnt.status?.toLowerCase() === 'active' ? 'active' : 'pending',
-              case_type: 'Full Representation',
-              client: cnt.client,
+              title: cnt.title || cnt.job_post?.title || 'Retainer Contract Representation',
+              description: cnt.terms || cnt.job_post?.description || 'Formal representation contract.',
+              status: cnt.status?.toLowerCase() === 'active' || cnt.status?.toLowerCase() === 'signed' ? 'active' : 'pending',
+              practice_area: cnt.job_post?.category || cnt.category || 'General Representation',
+              client: cnt.client || {},
               client_id: cnt.client_id,
               lawyer_id: cnt.lawyer_id,
               contract: cnt,
-              agreed_fee: cnt.amount || cnt.agreed_amount,
+              job_post: cnt.job_post,
+              agreed_fee: cnt.amount || cnt.agreed_amount || 0,
               outstanding_balance: cnt.outstanding_balance,
-              updated_at: cnt.updated_at || cnt.created_at
+              created_at: cnt.created_at,
+              updated_at: cnt.updated_at || cnt.created_at,
             });
           }
         });
       }
 
-      if (appointmentsData) {
-        appointmentsData.forEach(apt => {
-          const existsByLinked = Array.from(mergedMap.values()).some(c => String(c.linked_appointment_id) === String(apt.id));
+      if (Array.isArray(appointmentsData)) {
+        appointmentsData.forEach((apt) => {
+          if (String(apt.status).toLowerCase() === 'rejected') return;
+
+          const existsByLinked = Array.from(mergedMap.values()).some(
+            (c) => String(c.linked_appointment_id) === String(apt.id) || String(c.appointment_id) === String(apt.id)
+          );
           if (!existsByLinked) {
             const synthId = `consultation_${apt.id}`;
             mergedMap.set(String(synthId), {
               id: synthId,
               linked_appointment_id: apt.id,
-              title: apt.session_type ? `${apt.session_type} (${apt.reason})` : (apt.reason || 'Consultation Matter'),
-              description: apt.notes || apt.reason || 'Active consultation matter.',
-              status: apt.status === 'confirmed' || apt.status === 'active' || apt.status === 'Upcoming' || apt.status === 'In Progress' ? 'active' : 'pending',
-              case_type: 'Consultation',
+              title: apt.session_type ? `${apt.session_type} (${apt.reason || 'Consultation'})` : apt.reason || 'Legal Consultation Session',
+              description: apt.notes || apt.reason || 'Scheduled client consultation matter.',
+              status:
+                apt.status === 'confirmed' || apt.status === 'active' || apt.status === 'Upcoming' || apt.status === 'In Progress'
+                  ? 'active'
+                  : apt.status === 'completed'
+                  ? 'completed'
+                  : 'pending',
+              practice_area: apt.practice_area || 'Legal Consultation',
               medium: apt.medium || 'video_call',
-              client: apt.client,
+              client: apt.client || {},
               client_id: apt.client_id,
               lawyer_id: apt.lawyer_id,
-              agreed_fee: apt.agreed_fee || apt.fee_amount,
-              updated_at: apt.updated_at || apt.created_at
+              agreed_fee: apt.agreed_fee || apt.fee_amount || 0,
+              created_at: apt.created_at,
+              updated_at: apt.updated_at || apt.created_at,
             });
           }
         });
       }
 
       const mergedList = Array.from(mergedMap.values());
-      
-      // Resolve client profiles across users, profiles, and clients tables
-      const allClientIds = [...new Set(mergedList.map(item => item.client_id || item.user_id || item.client?.id).filter(Boolean))];
+
+      // Resolve missing client profiles
+      const allClientIds = [...new Set(mergedList.map((item) => item.client_id || item.user_id || item.client?.id).filter(Boolean))];
       const clientsMap = {};
 
       if (allClientIds.length > 0) {
         try {
-          const { data: usersRes } = await supabase
-            .from('users')
-            .select('id, name, full_name, email, profile_picture_url, user_type')
-            .in('id', allClientIds);
-          if (usersRes) {
-            usersRes.forEach(u => {
+          const { data: uData } = await supabase.from('users').select('id, name, full_name, email, phone, profile_picture_url, location').in('id', allClientIds);
+          if (uData) {
+            uData.forEach((u) => {
               clientsMap[u.id] = { ...u, name: u.name || u.full_name || u.email || 'Client' };
             });
           }
-        } catch(e) {}
+        } catch (e) {}
 
         try {
-          const { data: profilesRes } = await supabase
-            .from('profiles')
-            .select('id, full_name, email, profile_picture_url')
-            .in('id', allClientIds);
-          if (profilesRes) {
-            profilesRes.forEach(p => {
-              if (!clientsMap[p.id] || !clientsMap[p.id].name) {
-                clientsMap[p.id] = { ...p, name: p.full_name || p.email || 'Client' };
-              }
+          const { data: pData } = await supabase.from('profiles').select('id, full_name, email, phone, profile_picture_url, city').in('id', allClientIds);
+          if (pData) {
+            pData.forEach((p) => {
+              const target = clientsMap[p.id] || {};
+              clientsMap[p.id] = {
+                ...target,
+                ...p,
+                name: p.full_name || target.name || p.email || 'Client',
+                location: p.city || target.location || 'Bangladesh',
+              };
             });
           }
-        } catch(e) {}
+        } catch (e) {}
 
         try {
-          const { data: clientsTableRes } = await supabase
-            .from('clients')
-            .select('id, user_id, full_name, email, profile_picture_url')
-            .in('user_id', allClientIds);
-          if (clientsTableRes) {
-            clientsTableRes.forEach(c => {
+          const { data: cData } = await supabase.from('clients').select('id, user_id, full_name, email, phone_number, profile_picture_url, city').in('user_id', allClientIds);
+          if (cData) {
+            cData.forEach((c) => {
               const targetId = c.user_id || c.id;
-              if (!clientsMap[targetId] || !clientsMap[targetId].name) {
-                clientsMap[targetId] = { ...c, name: c.full_name || c.email || 'Client' };
-              }
+              const target = clientsMap[targetId] || {};
+              clientsMap[targetId] = {
+                ...target,
+                ...c,
+                name: c.full_name || target.name || c.email || 'Client',
+                phone: c.phone_number || target.phone || 'Protected Contact',
+                location: c.city || target.location || 'Bangladesh',
+              };
             });
           }
-        } catch(e) {}
+        } catch (e) {}
       }
 
-      mergedList.forEach(item => {
+      mergedList.forEach((item) => {
         const cId = item.client_id || item.user_id || item.client?.id;
         const resolvedClient = clientsMap[cId] || item.client || {};
-        const resolvedName = resolvedClient.name || resolvedClient.full_name || item.client_name || item.guest_name || item.contact_name || item.sender_name || 'Client';
-        
+        const resolvedName =
+          resolvedClient.name ||
+          resolvedClient.full_name ||
+          item.client_name ||
+          item.guest_name ||
+          item.contact_name ||
+          'Legal Client';
+
         item.client = {
           ...resolvedClient,
-          name: resolvedName !== 'Unassigned' ? resolvedName : 'Client',
-          profile_picture_url: resolvedClient.profile_picture_url || item.client?.profile_picture_url
+          name: resolvedName !== 'Unassigned' ? resolvedName : 'Legal Client',
+          profile_picture_url: resolvedClient.profile_picture_url || item.client?.profile_picture_url,
         };
       });
 
       setCases(mergedList);
+      setAppointments(appointmentsData || []);
+      setPayments(paymentsData || []);
 
-      if (casesData && casesData.length > 0) {
-        const caseIds = casesData.map(c => c.id);
-        const { data: docsData } = await supabase
-          .from('documents')
-          .select('*')
-          .in('case_id', caseIds)
-          .order('uploaded_at', { ascending: false });
-        setDocuments(docsData || []);
+      // Fetch documents for all cases
+      const caseIds = mergedList.map((c) => c.id).filter((id) => typeof id === 'string' && !id.startsWith('contract_') && !id.startsWith('consultation_'));
+      if (caseIds.length > 0) {
+        try {
+          const { data: docsRes } = await supabase.from('documents').select('*').in('case_id', caseIds).order('uploaded_at', { ascending: false });
+          setDocuments(docsRes || []);
+        } catch (e) {}
       } else {
         setDocuments([]);
       }
-    } catch (error) {
-      console.error('Error fetching cases:', error.message, error);
-      setError('Failed to load cases. Please check your network connection.');
-      setCases([]);
-      setDocuments([]);
+    } catch (err) {
+      console.error('Error in fetchCasesData:', err.message, err);
+      setError('Unable to load your cases. Please verify database connection and retry.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id, user?.auth_id]);
 
-  // Fetch milestones for the selected case
-  const fetchMilestones = useCallback(async (caseId) => {
-    if (!caseId) return;
+  useEffect(() => {
+    fetchCasesData();
+
+    // Realtime subscriptions
+    const authId = user?.id || user?.auth_id;
+    if (!authId) return;
+
+    const channel = supabase
+      .channel(`lawyer_cases_live_${authId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cases' }, () => fetchCasesData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'contracts' }, () => fetchCasesData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, () => fetchCasesData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'case_milestones' }, () => fetchCasesData())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchCasesData, user?.id, user?.auth_id]);
+
+  // Deep link to selected case
+  useEffect(() => {
+    if (caseId && cases.length > 0) {
+      const found = cases.find((c) => String(c.id) === String(caseId) || String(c.linked_appointment_id) === String(caseId));
+      if (found) {
+        setSelectedCase(found);
+        fetchMilestones(found.id);
+      }
+    }
+  }, [caseId, cases]);
+
+  // Fetch Milestones when opening detail drawer
+  const fetchMilestones = async (cId) => {
+    if (!cId || typeof cId !== 'string' || cId.startsWith('contract_') || cId.startsWith('consultation_')) {
+      setMilestones([]);
+      return;
+    }
     setMilestoneLoading(true);
     try {
-      const { data, error } = await supabase
+      const { data, error: mErr } = await supabase
         .from('case_milestones')
         .select('*')
-        .eq('case_id', caseId)
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
+        .eq('case_id', cId)
+        .order('due_date', { ascending: true });
+      if (mErr) throw mErr;
       setMilestones(data || []);
     } catch (err) {
-      console.error('Error fetching milestones:', err);
+      console.warn('Milestones query note:', err.message);
       setMilestones([]);
     } finally {
       setMilestoneLoading(false);
     }
-  }, []);
+  };
 
-  // When selectedCase changes, fetch its milestones
-  useEffect(() => {
-    if (selectedCase) {
-      fetchMilestones(selectedCase.id);
-      setDrawerTab('timeline');
-    } else {
-      setMilestones([]);
-    }
-  }, [selectedCase, fetchMilestones]);
+  // 2. Computed Summary Statistics
+  const stats = useMemo(() => {
+    let activeCases = 0;
+    let pendingContracts = 0;
+    let completedCases = 0;
+    let totalEarnings = 0;
+    let upcomingMeetings = 0;
+    let totalRatings = 0;
+    let ratingCount = 0;
 
-  // Realtime subscription for milestone changes on selected case
-  useEffect(() => {
-    if (!selectedCase) return;
-    const channel = supabase
-      .channel(`milestones_case_${selectedCase.id}`)
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'case_milestones',
-        filter: `case_id=eq.${selectedCase.id}`
-      }, (payload) => {
-        if (payload.eventType === 'INSERT') {
-          setMilestones(prev => [...prev, payload.new]);
-        } else if (payload.eventType === 'UPDATE') {
-          setMilestones(prev => prev.map(m => m.id === payload.new.id ? payload.new : m));
-          if (payload.new.status === 'approved') {
-            toast.success(`Milestone "${payload.new.title}" approved!`);
-          } else if (payload.new.status === 'rejected') {
-            toast('Milestone rejected by client', { icon: '⚠️' });
-          } else if (payload.new.status === 'revision_requested') {
-            toast('Client requested revisions', { icon: '📝' });
+    const now = new Date();
+
+    cases.forEach((c) => {
+      const st = String(c.status).toLowerCase();
+      if (st === 'active' || st === 'in progress' || st === 'in_progress' || st.includes('ongoing') || st === 'confirmed') {
+        activeCases++;
+      } else if (st === 'completed' || st === 'resolved' || st === 'closed') {
+        completedCases++;
+      } else if (st === 'pending' || st.includes('waiting')) {
+        pendingContracts++;
+      }
+
+      const fee = Number(c.contract?.amount || c.contract?.agreed_amount || c.agreed_fee || 0);
+      if (st === 'completed' || c.payment_status === 'paid' || c.contract?.status === 'active') {
+        totalEarnings += fee;
+      }
+
+      // Check client rating if available
+      if (c.client?.rating) {
+        totalRatings += Number(c.client.rating);
+        ratingCount++;
+      }
+    });
+
+    if (Array.isArray(appointments)) {
+      appointments.forEach((apt) => {
+        if (apt.scheduled_at || apt.date || apt.appointment_date) {
+          const d = new Date(apt.scheduled_at || apt.date || apt.appointment_date);
+          if (!isNaN(d.getTime()) && d >= now) {
+            upcomingMeetings++;
           }
         }
-      })
-      .subscribe();
+      });
+    }
 
-    return () => { supabase.removeChannel(channel); };
-  }, [selectedCase]);
+    const averageRating = ratingCount > 0 ? totalRatings / ratingCount : 4.9;
 
-  // Submit a new milestone
-  const handleSubmitMilestone = async () => {
-    if (!newMilestone.title.trim()) { toast.error('Milestone title is required'); return; }
-    if (!selectedCase || !user) return;
+    return {
+      activeCases,
+      pendingContracts,
+      completedCases,
+      totalEarnings,
+      upcomingMeetings,
+      averageRating,
+    };
+  }, [cases, appointments]);
+
+  // 3. Filtered, Searched & Sorted Cases
+  const filteredCases = useMemo(() => {
+    return cases.filter((c) => {
+      // Search check
+      if (searchTerm.trim()) {
+        const q = searchTerm.toLowerCase();
+        const titleMatch = (c.title || c.case_title || '').toLowerCase().includes(q);
+        const clientMatch = (c.client?.name || c.client?.full_name || '').toLowerCase().includes(q);
+        const idMatch = String(c.id).toLowerCase().includes(q);
+        if (!titleMatch && !clientMatch && !idMatch) return false;
+      }
+
+      // Status check
+      if (filters.status !== 'All') {
+        const norm = String(c.status).toLowerCase();
+        if (filters.status === 'Active' && !(norm === 'active' || norm === 'confirmed' || norm === 'hired')) return false;
+        if (filters.status === 'Pending' && !(norm === 'pending' || norm.includes('pending_negotiation'))) return false;
+        if (filters.status === 'In Progress' && !(norm === 'in progress' || norm === 'in_progress' || norm.includes('ongoing'))) return false;
+        if (filters.status === 'Waiting for Client' && !norm.includes('waiting')) return false;
+        if (filters.status === 'Completed' && !(norm === 'completed' || norm === 'resolved' || norm === 'closed')) return false;
+        if (filters.status === 'Cancelled' && !(norm === 'cancelled' || norm === 'rejected')) return false;
+      }
+
+      // Practice Area check
+      if (filters.practiceArea !== 'All') {
+        const area = (c.practice_area || c.case_type || c.category || '').toLowerCase();
+        if (!area.includes(filters.practiceArea.toLowerCase())) return false;
+      }
+
+      // Date Range check
+      if (filters.dateRange !== 'All') {
+        const itemDate = new Date(c.updated_at || c.created_at);
+        if (!isNaN(itemDate.getTime())) {
+          const now = new Date();
+          const diffDays = (now - itemDate) / (1000 * 60 * 60 * 24);
+          if (filters.dateRange === 'Last 7 Days' && diffDays > 7) return false;
+          if (filters.dateRange === 'Last 30 Days' && diffDays > 30) return false;
+          if (filters.dateRange === 'Last 90 Days' && diffDays > 90) return false;
+          if (filters.dateRange === 'This Year' && itemDate.getFullYear() !== now.getFullYear()) return false;
+        }
+      }
+
+      return true;
+    }).sort((a, b) => {
+      if (filters.sortBy === 'Newest') {
+        return new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at);
+      } else if (filters.sortBy === 'Oldest') {
+        return new Date(a.updated_at || a.created_at) - new Date(b.updated_at || b.created_at);
+      } else if (filters.sortBy === 'Highest Fee') {
+        const feeA = Number(a.contract?.amount || a.agreed_fee || 0);
+        const feeB = Number(b.contract?.amount || b.agreed_fee || 0);
+        return feeB - feeA;
+      } else if (filters.sortBy === 'Lowest Fee') {
+        const feeA = Number(a.contract?.amount || a.agreed_fee || 0);
+        const feeB = Number(b.contract?.amount || b.agreed_fee || 0);
+        return feeA - feeB;
+      } else if (filters.sortBy === 'Deadline') {
+        const dA = new Date(a.next_hearing_date || a.deadline || a.estimated_completion || '2099-01-01');
+        const dB = new Date(b.next_hearing_date || b.deadline || b.estimated_completion || '2099-01-01');
+        return dA - dB;
+      }
+      return 0;
+    });
+  }, [cases, searchTerm, filters]);
+
+  // Paginated Cases
+  const totalPages = Math.ceil(filteredCases.length / itemsPerPage);
+  const paginatedCases = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return filteredCases.slice(start, start + itemsPerPage);
+  }, [filteredCases, currentPage, itemsPerPage]);
+
+  const handleFilterChange = (field, value) => {
+    setFilters((prev) => ({ ...prev, [field]: value }));
+    setCurrentPage(1);
+  };
+
+  // 4. Case Actions Handlers
+  const fetchContractTimeline = async (contractId) => {
+    if (!contractId) return;
+    try {
+      const { data } = await supabase
+        .from('contract_timeline')
+        .select('*')
+        .eq('contract_id', contractId)
+        .order('created_at', { ascending: true });
+      setContractTimeline(data || []);
+    } catch (e) { setContractTimeline([]); }
+  };
+
+  const handleLawyerAcceptContract = async (contractId) => {
+    setSubmittingContractAction(true);
+    try {
+      const { error } = await supabase.rpc('fn_lawyer_accept_contract', { p_contract_id: contractId });
+      if (error) throw error;
+      toast.success('Contract accepted! Work has begun.');
+      fetchCasesData();
+      fetchContractTimeline(contractId);
+    } catch (err) { toast.error(`Failed: ${err.message}`); }
+    finally { setSubmittingContractAction(false); }
+  };
+
+  const handleAddProgressUpdate = async (e) => {
+    e.preventDefault();
+    if (!selectedCase?.contract?.id || !progressTitle.trim()) return;
+    setSubmittingContractAction(true);
+    try {
+      const { error } = await supabase.rpc('fn_add_progress_update', {
+        p_contract_id: selectedCase.contract.id,
+        p_title: progressTitle.trim(),
+        p_note: progressNote.trim() || null,
+      });
+      if (error) throw error;
+      toast.success('Progress update sent to client!');
+      setProgressTitle(''); setProgressNote(''); setContractAction(null);
+      fetchContractTimeline(selectedCase.contract.id);
+    } catch (err) { toast.error(`Failed: ${err.message}`); }
+    finally { setSubmittingContractAction(false); }
+  };
+
+  const handleMarkReadyForReview = async (contractId) => {
+    setSubmittingContractAction(true);
+    try {
+      const { error } = await supabase.rpc('fn_mark_ready_for_review', {
+        p_contract_id: contractId,
+        p_note: reviewNote.trim() || null,
+      });
+      if (error) throw error;
+      toast.success('Work submitted for client review!');
+      setReviewNote(''); setContractAction(null);
+      fetchCasesData(); fetchContractTimeline(contractId);
+    } catch (err) { toast.error(`Failed: ${err.message}`); }
+    finally { setSubmittingContractAction(false); }
+  };
+
+  const handleOpenDetails = (caseItem, tab = 'overview') => {
+    setSelectedCase(caseItem);
+    setDrawerTab(tab);
+    fetchMilestones(caseItem.id);
+    if (tab === 'contract' && caseItem.contract?.id) {
+      fetchContractTimeline(caseItem.contract.id);
+    }
+  };
+
+  const handleOpenMessages = (caseItem) => {
+    const targetClient = caseItem.client?.id || caseItem.client_id;
+    if (targetClient) {
+      navigate(`/lawyer-suite/communication?clientId=${targetClient}&case=${caseItem.id}`);
+    } else {
+      toast.error('Client contact ID not available.');
+    }
+  };
+
+  const handleMarkComplete = async (caseItem) => {
+    if (!caseItem?.id) return;
+    setIsCompleting(true);
+    try {
+      if (typeof caseItem.id === 'string' && (caseItem.id.startsWith('contract_') || caseItem.id.startsWith('consultation_'))) {
+        toast.success('Case matter marked as resolved!');
+        setCases((prev) => prev.map((c) => (c.id === caseItem.id ? { ...c, status: 'completed' } : c)));
+      } else {
+        // Use fn_complete_case RPC
+        const { error: rpcErr } = await supabase.rpc('fn_complete_case', { p_case_id: caseItem.id });
+        if (rpcErr) {
+          // Fallback to direct update
+          const { error: updErr } = await supabase
+            .from('cases')
+            .update({ status: 'Completed', updated_at: new Date().toISOString() })
+            .eq('id', caseItem.id);
+          if (updErr) throw updErr;
+        }
+        toast.success('Case marked as completed successfully!');
+        fetchCasesData();
+      }
+      if (selectedCase?.id === caseItem.id) {
+        setSelectedCase((prev) => ({ ...prev, status: 'completed' }));
+      }
+    } catch (err) {
+      console.error('Error marking complete:', err);
+      toast.error(`Could not close case: ${err.message}`);
+    } finally {
+      setIsCompleting(false);
+    }
+  };
+
+  // Add Milestone inside Drawer
+  const handleCreateMilestone = async (e) => {
+    e.preventDefault();
+    if (!selectedCase?.id || typeof selectedCase.id !== 'string' || selectedCase.id.startsWith('contract_')) {
+      toast.error('Real case record required to add database milestones.');
+      return;
+    }
+    if (!newMilestone.title.trim()) {
+      toast.error('Please enter a milestone title.');
+      return;
+    }
+
     setSubmittingMilestone(true);
     try {
-      const { error } = await supabase
-        .from('case_milestones')
-        .insert([{
-          case_id: selectedCase.id,
-          lawyer_id: user.id,
-          title: newMilestone.title.trim(),
-          description: newMilestone.description.trim() || null,
-          milestone_fee: Number(newMilestone.milestone_fee || 0),
-          status: 'submitted',
-          submitted_at: new Date().toISOString()
-        }]);
+      const payload = {
+        case_id: selectedCase.id,
+        title: newMilestone.title.trim(),
+        description: newMilestone.description.trim(),
+        milestone_fee: newMilestone.milestone_fee ? Number(newMilestone.milestone_fee) : 0,
+        due_date: newMilestone.due_date || null,
+        status: 'pending',
+        created_at: new Date().toISOString(),
+      };
 
-      if (error) throw error;
-      toast.success('Milestone submitted to client for review');
-      setNewMilestone({ title: '', description: '', milestone_fee: '' });
-      // Realtime will handle adding to the list
+      const { data, error: insErr } = await supabase.from('case_milestones').insert([payload]).select();
+      if (insErr) throw insErr;
+
+      toast.success('New milestone added successfully!');
+      setMilestones((prev) => [...(data || [payload]), ...prev]);
+      setNewMilestone({ title: '', description: '', milestone_fee: '', due_date: '' });
+      fetchCasesData();
     } catch (err) {
-      console.error('Error submitting milestone:', err);
-      toast.error('Failed to submit milestone');
+      console.error('Milestone insert error:', err);
+      toast.error(`Error adding milestone: ${err.message}`);
     } finally {
       setSubmittingMilestone(false);
     }
   };
 
-  // Resubmit a revised milestone
-  const handleResubmitMilestone = async (milestoneId) => {
+  // Document upload handler — uses correct documents table schema
+  const handleUploadDocument = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedCase?.id || typeof selectedCase.id !== 'string' || selectedCase.id.startsWith('contract_')) {
+      return;
+    }
+
+    setUploadingDoc(true);
     try {
-      const { error } = await supabase
-        .from('case_milestones')
-        .update({ status: 'submitted', reviewed_at: null, client_feedback: null, submitted_at: new Date().toISOString() })
-        .eq('id', milestoneId);
+      const fileExt = file.name.split('.').pop();
+      const fileName = `case_${selectedCase.id}/${Date.now()}_${file.name}`;
+      const { error: storageErr } = await supabase.storage.from('case-documents').upload(fileName, file);
+      if (storageErr) throw storageErr;
 
-      if (error) throw error;
-      toast.success('Milestone resubmitted for review');
+      const { data: publicUrlData } = supabase.storage.from('case-documents').getPublicUrl(fileName);
+      const fileUrl = publicUrlData?.publicUrl || '';
+
+      // Use correct documents table schema: client_id, lawyer_id, file_name, storage_url
+      const docPayload = {
+        case_id: selectedCase.id,
+        client_id: selectedCase.client_id || selectedCase.client?.id,
+        lawyer_id: user.id,
+        file_name: file.name,
+        storage_url: fileUrl,
+        file_type: fileExt,
+        uploaded_at: new Date().toISOString(),
+      };
+
+      const { data: newDoc, error: docErr } = await supabase.from('documents').insert([docPayload]).select();
+      if (docErr) throw docErr;
+
+      toast.success('Document uploaded to vault successfully!');
+      setDocuments((prev) => [...(newDoc || [docPayload]), ...prev]);
     } catch (err) {
-      toast.error('Failed to resubmit milestone');
+      console.error('Doc upload error:', err);
+      toast.error(`Upload failed: ${err.message}`);
+    } finally {
+      setUploadingDoc(false);
     }
   };
-
-  const getRelativeTime = (dateStr) => {
-    const diffMs = new Date().getTime() - new Date(dateStr).getTime();
-    if (diffMs < 60000) return 'Just now';
-    const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
-    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    if (days === 0) {
-      const hours = Math.floor(diffMs / (1000 * 60 * 60));
-      if (hours === 0) return rtf.format(-Math.floor(diffMs / 60000), 'minute');
-      return rtf.format(-hours, 'hour');
-    }
-    return rtf.format(-days, 'day');
-  };
-
-  // Milestone progress calculation
-  const approvedCount = milestones.filter(m => m.status === 'approved').length;
-  const totalCount = milestones.length;
-  const milestonePercent = totalCount > 0 ? Math.round((approvedCount / totalCount) * 100) : 0;
-
-  const getStatusBadge = (status) => {
-    const map = {
-      pending: { bg: 'bg-gray-100', text: 'text-gray-600', label: 'Pending' },
-      submitted: { bg: 'bg-blue-50', text: 'text-blue-700', label: 'Submitted' },
-      approved: { bg: 'bg-green-50', text: 'text-green-700', label: 'Approved' },
-      rejected: { bg: 'bg-red-50', text: 'text-red-700', label: 'Rejected' },
-      revision_requested: { bg: 'bg-amber-50', text: 'text-amber-700', label: 'Revision Requested' },
-    };
-    const s = map[status] || map.pending;
-    return <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${s.bg} ${s.text}`}>{s.label}</span>;
-  };
-
-  if (loading) {
-    return (
-      <div className="p-8 flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="p-8 max-w-container-max mx-auto flex items-center justify-center min-h-[400px]">
-        <div className="bg-red-50 border border-red-200 rounded-2xl p-8 max-w-md text-center space-y-4">
-          <span className="material-symbols-outlined text-5xl text-red-500">error_outline</span>
-          <h3 className="text-xl font-bold text-primary">Failed to Load Cases</h3>
-          <p className="text-gray-600 text-sm">{error}</p>
-          <button 
-            onClick={() => { setLoading(true); setError(null); fetchCasesData(); }}
-            className="px-6 py-2.5 bg-primary hover:bg-primary/90 text-white font-bold rounded-xl shadow transition active:scale-95"
-          >
-            Retry
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const filteredCases = cases.filter(c => {
-    if (caseFilter === 'All') return true;
-    const st = (c.status || '').toLowerCase();
-    if (caseFilter === 'Active') return st === 'active' || st === 'in progress' || st === 'confirmed' || st === 'upcoming';
-    if (caseFilter === 'Pending') return st === 'pending' || st === 'pending_negotiation' || st === 'draft' || st === 'pending review';
-    if (caseFilter === 'Closed') return st === 'closed' || st === 'completed' || st === 'archived' || st === 'terminated';
-    return true;
-  });
 
   return (
-    <div className="animate-fadeIn p-8 max-w-[1600px] mx-auto">
-      <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-6">
-        <div>
-          <h2 className="font-serif text-[32px] font-bold text-[#041635] mb-2">My Legal Cases</h2>
-          <p className="text-gray-600 text-[15px] max-w-xl">Manage your ongoing legal proceedings, track milestones, and communicate with your clients.</p>
-        </div>
-        <div className="flex items-center gap-2 overflow-x-auto pb-2 md:pb-0">
-          {['All', 'Active', 'Pending', 'Closed'].map(filter => (
-            <button 
-              key={filter} 
-              onClick={() => setCaseFilter(filter)}
-              className={`px-5 py-2 rounded-full text-[13px] font-medium transition-colors whitespace-nowrap ${caseFilter === filter ? 'bg-[#041635] text-white' : 'bg-white border border-gray-300 text-gray-600 hover:border-[#755b00] hover:text-[#755b00]'}`}
-            >
-              {filter}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="space-y-4 max-w-5xl">
-        {filteredCases.length === 0 ? (
-          <div className="bg-white p-12 rounded-xl border border-gray-200 text-center space-y-3">
-            <span className="material-symbols-outlined text-5xl text-gray-300">work_history</span>
-            <p className="text-gray-600 font-bold text-lg">No legal cases found in this category</p>
-            <p className="text-sm text-gray-400 max-w-md mx-auto">When clients hire you or initiate contracts, your active and archived matters will be listed here.</p>
+    <div className="flex-1 bg-[#041635] min-h-screen p-4 sm:p-8 lg:p-10 font-sans text-text-main overflow-y-auto">
+      <div className="max-w-7xl mx-auto space-y-8">
+        {/* Dashboard Header */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-6">
+          <div>
+            <h1 className="text-3xl sm:text-4xl font-serif font-bold text-white tracking-tight flex items-center gap-3">
+              <span>⚖️</span>
+              <span>My Cases</span>
+            </h1>
+            <p className="text-sm text-gray-300 mt-1 max-w-2xl">
+              Manage your active legal matters, contracts, milestones, consultations and client communications.
+            </p>
           </div>
+
+          <div className="flex items-center gap-3 self-start md:self-auto">
+            <button
+              type="button"
+              onClick={fetchCasesData}
+              disabled={loading}
+              className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition flex items-center gap-2 border border-white/10 shadow-sm focus:outline-none"
+            >
+              <span className={`material-symbols-outlined text-base ${loading ? 'animate-spin' : ''}`}>refresh</span>
+              <span>{loading ? 'Refreshing...' : 'Refresh Live Data'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 1. Top Summary Cards (Dynamic) */}
+        <CaseSummaryCards stats={stats} />
+
+        {/* 2. Search & Filter Bar */}
+        <div className="space-y-4">
+          <CaseSearchBar
+            searchTerm={searchTerm}
+            onSearchChange={(val) => {
+              setSearchTerm(val);
+              setCurrentPage(1);
+            }}
+          />
+          <CaseFilters filters={filters} onFilterChange={handleFilterChange} totalResults={filteredCases.length} />
+        </div>
+
+        {/* 3. Main Content Area (Loading, Error, Empty, or Cases + Right Sidebar) */}
+        {loading ? (
+          <LoadingSkeleton />
+        ) : error ? (
+          <div className="bg-white rounded-2xl border border-rose-200 p-8 text-center max-w-lg mx-auto shadow-sm space-y-4 my-8">
+            <div className="w-16 h-16 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mx-auto text-3xl font-bold">
+              ⚠️
+            </div>
+            <div className="space-y-1">
+              <h4 className="font-bold text-navy-primary text-base">Unable to load your cases</h4>
+              <p className="text-xs text-gray-500">{error}</p>
+            </div>
+            <button
+              type="button"
+              onClick={fetchCasesData}
+              className="px-6 py-2.5 bg-navy-primary hover:bg-navy-secondary text-white rounded-xl text-xs font-bold shadow-sm transition"
+            >
+              Retry Connection
+            </button>
+          </div>
+        ) : cases.length === 0 ? (
+          <EmptyState onBrowseJobs={() => navigate('/lawyer-suite/browse-jobs')} />
         ) : (
-          filteredCases.map(c => {
-            // Use real milestones if this case is selected, otherwise fallback to case_progress
-            const caseMilestones = selectedCase?.id === c.id ? milestones : [];
-            const caseApproved = caseMilestones.filter(m => m.status === 'approved').length;
-            const caseTotal = caseMilestones.length || ((c.case_progress?.length || 0) + 2);
-            const caseCompleted = caseMilestones.length > 0 ? caseApproved : (c.case_progress?.length || 0);
-            const percent = caseTotal > 0 ? Math.round((caseCompleted / caseTotal) * 100) : 0;
-            
-            const isCompleted = c.status === 'Closed';
-            const isPending = c.status === 'Pending';
-            
-            const barColorClass = isCompleted ? 'bg-[#569f9f]' : isPending ? 'bg-[#e6c364]' : 'bg-[#fed977]';
-            const badgeBg = isCompleted ? 'bg-[#569f9f]/10' : isPending ? 'bg-[#dce3ef]' : 'bg-[#fed977]';
-            const badgeText = isCompleted ? 'text-[#569f9f]' : isPending ? 'text-[#44474e]' : 'text-[#785d00]';
-            const icon = isCompleted ? 'check_circle' : 'schedule';
-            const updateText = isCompleted ? `Closed ${new Date(c.updated_at || c.created_at).toLocaleDateString('default', {month:'short', year:'numeric'})}` : isPending ? 'Pending Review' : `Updated ${getRelativeTime(c.updated_at || c.created_at)}`;
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+            {/* Left 2 Columns: Case Cards & Pagination */}
+            <div className="lg:col-span-2 space-y-6">
+              {paginatedCases.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-border-subtle p-10 text-center space-y-3">
+                  <span className="text-3xl block">🔍</span>
+                  <h4 className="font-bold text-navy-primary text-sm">No cases match your active filters</h4>
+                  <p className="text-xs text-gray-500">Try clearing your search term or selecting 'All' in practice area and status filters.</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchTerm('');
+                      setFilters({ status: 'All', practiceArea: 'All', dateRange: 'All', sortBy: 'Newest' });
+                    }}
+                    className="px-4 py-2 bg-navy-primary text-white rounded-xl text-xs font-bold shadow-2xs transition"
+                  >
+                    Clear All Filters
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  {paginatedCases.map((cItem) => (
+                    <CaseCard
+                      key={cItem.id}
+                      caseItem={cItem}
+                      onViewDetails={(item, tab) => handleOpenDetails(item, tab)}
+                      onOpenMessages={handleOpenMessages}
+                      onOpenDocuments={(item) => handleOpenDetails(item, 'documents')}
+                      onOpenTimeline={(item) => handleOpenDetails(item, 'timeline')}
+                      onOpenInvoice={(item) => handleOpenDetails(item, 'overview')}
+                      onMarkComplete={handleMarkComplete}
+                      isCompleting={isCompleting && selectedCase?.id === cItem.id}
+                    />
+                  ))}
+                </div>
+              )}
 
-            return (
-              <div key={c.id} className="bg-white rounded-lg border border-gray-300 overflow-hidden hover:shadow-md hover:-translate-y-0.5 flex flex-col md:flex-row relative transition-all group">
-                <div className={`w-2 shrink-0 ${barColorClass}`}></div>
-                <div className="p-6 flex-1 grid md:grid-cols-4 items-center gap-6">
-                  
-                  <div className="md:col-span-2">
-                    <span className="text-[11px] font-bold tracking-wider text-gray-500 mb-1 block uppercase">Case #{String(c.id).substring(0,8)}</span>
-                    <h3 className="font-serif text-[22px] font-bold text-[#041635] mb-3 leading-tight line-clamp-1">{c.title}</h3>
-                    <div className="flex items-center gap-3">
-                      <span className={`px-3 py-1 rounded-full ${badgeBg} ${badgeText} text-[11px] font-bold`}>{c.category || 'Legal Matter'}</span>
-                      <span className="flex items-center gap-1 text-gray-500 text-[12px]"><span className="material-symbols-outlined text-[16px]">{icon}</span> {updateText}</span>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center gap-3">
-                    <div className="relative">
-                      <img alt="Client Avatar" className="w-10 h-10 rounded-full object-cover" src={c.client?.profile_picture_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(c.client?.name || 'Client')}&background=041635&color=fff`} />
-                    </div>
-                    <div>
-                      <p className="text-[13px] font-bold text-[#041635]">{c.client?.name || 'Client'}</p>
-                      <p className="text-[11px] font-semibold text-gray-500">
-                        {c.case_type === 'Consultation' ? 'Booked Appointment / Consulting' : c.case_type === 'Full Representation' ? 'Contract Client' : 'Case Client'}
-                      </p>
-                    </div>
-                  </div>
-                  
-                  <div className="flex flex-col gap-3 items-end">
-                    <div className="w-full max-w-[140px]">
-                      <div className="flex justify-between items-center mb-1">
-                        <span className="text-[11px] font-medium text-gray-500">{caseCompleted} of {caseTotal} complete</span>
-                        <span className={`text-[11px] font-bold text-[#041635]`}>{percent}%</span>
-                      </div>
-                      <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
-                        <div className={`h-full ${barColorClass} rounded-full transition-all duration-500`} style={{ width: `${percent}%` }}></div>
-                      </div>
-                    </div>
-                    <button onClick={() => setSelectedCase(c)} className="px-4 py-2 border border-[#041635] text-[#041635] rounded-lg text-[13px] font-medium hover:bg-[#041635] hover:text-white transition-all active:scale-95">View Case</button>
-                  </div>
+              {/* Server/Page Pagination */}
+              <Pagination
+                currentPage={currentPage}
+                totalPages={totalPages}
+                totalItems={filteredCases.length}
+                itemsPerPage={itemsPerPage}
+                onPageChange={(page) => setCurrentPage(page)}
+              />
+            </div>
 
+            {/* Right Panel: Upcoming Events & Quick Help */}
+            <div className="space-y-6 lg:sticky lg:top-8">
+              <UpcomingEvents cases={cases} appointments={appointments} />
+
+              {/* Practice Assurance Card */}
+              <div className="bg-gradient-to-br from-navy-primary to-indigo-950 rounded-2xl p-6 text-white border border-white/10 shadow-md space-y-4">
+                <div className="flex items-center gap-3">
+                  <span className="w-10 h-10 rounded-xl bg-accent-gold/20 text-accent-gold flex items-center justify-center text-xl font-bold">
+                    🛡️
+                  </span>
+                  <div>
+                    <h5 className="font-serif font-bold text-base text-white">Escrow Assurance & Compliance</h5>
+                    <p className="text-[11px] text-gray-300">Supreme Court & Bangladesh Bar Council Compliant</p>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-200 leading-relaxed">
+                  All active case retainers and milestone payments are safeguarded in client-verified escrow until milestone completion is mutually verified.
+                </p>
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => navigate('/lawyer-suite/schedule/settings')}
+                    className="w-full py-2.5 rounded-xl bg-accent-gold text-navy-primary font-black text-xs hover:bg-yellow-400 transition shadow-xs flex items-center justify-center gap-1.5"
+                  >
+                    <span>Consultation & Fee Settings</span>
+                    <span className="material-symbols-outlined text-sm">arrow_forward</span>
+                  </button>
                 </div>
               </div>
-            )
-          })
+            </div>
+          </div>
         )}
       </div>
 
-      {/* Case Detail Drawer */}
-      <div 
-        className={`fixed inset-0 bg-[#041635]/20 backdrop-blur-sm z-[60] transition-opacity duration-300 ${selectedCase ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} 
-        onClick={() => setSelectedCase(null)}
-      ></div>
-      <aside 
-        className={`fixed right-0 top-0 h-full w-full max-w-xl bg-white z-[70] transition-transform duration-500 shadow-[-10px_0_30px_rgba(0,0,0,0.1)] overflow-y-auto ${selectedCase ? 'translate-x-0' : 'translate-x-full'}`}
-      >
-        {selectedCase && (
-          <div className="p-8">
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <span className="text-[11px] font-bold text-gray-500 uppercase tracking-widest">Case Details</span>
-                <h2 className="font-serif text-[24px] font-bold text-[#041635] leading-tight mt-1">{selectedCase.title}</h2>
+      {/* Slide-over Detail Drawer / Modal when selectedCase is set */}
+      {selectedCase && (
+        <div className="fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-xs flex justify-end transition-opacity">
+          <div className="w-full max-w-3xl bg-white h-full shadow-2xl flex flex-col justify-between overflow-hidden animate-slide-in-right">
+            {/* Drawer Header */}
+            <div className="p-6 bg-navy-primary text-white flex items-center justify-between border-b border-white/10 flex-shrink-0">
+              <div className="space-y-1 min-w-0 flex-1 pr-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-accent-gold text-navy-primary">
+                    {selectedCase.practice_area || selectedCase.case_type || 'Legal Case'}
+                  </span>
+                  <CaseStatusBadge status={selectedCase.status} size="sm" />
+                </div>
+                <h3 className="font-serif font-bold text-xl text-white truncate pt-0.5">
+                  {selectedCase.title || 'Case Representation'}
+                </h3>
               </div>
-              <button onClick={() => setSelectedCase(null)} className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors">
+              <button
+                type="button"
+                onClick={() => setSelectedCase(null)}
+                className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition flex-shrink-0"
+              >
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
 
-            {/* Client Card */}
-            <div className="bg-[#eef4ff] rounded-lg p-5 mb-6 border border-gray-200 flex items-center gap-4">
-              <img className="w-14 h-14 rounded-lg object-cover" src={selectedCase.client?.profile_picture_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(selectedCase.client?.name || 'Client')}&background=041635&color=fff`} alt="Client" />
-              <div>
-                <h4 className="font-bold text-[#041635] text-[16px]">{selectedCase.client?.name || 'Client'}</h4>
-                <p className="text-gray-600 font-medium text-[12px] mb-2">
-                  {selectedCase.case_type === 'Consultation' ? 'Booked Appointment / Consulting' : selectedCase.case_type === 'Full Representation' ? 'Contract Client' : 'Case Client'}
-                </p>
-                <button onClick={() => navigate(`/lawyer-suite/communication`)} className="bg-[#041635] text-white text-[11px] px-3 py-1.5 rounded-lg flex items-center gap-1 hover:bg-[#1b2b4b] transition-colors"><span className="material-symbols-outlined text-[14px]">mail</span> Message</button>
-              </div>
-            </div>
-
-            {/* Milestone Progress Bar */}
-            {totalCount > 0 && (
-              <div className="mb-6 bg-gradient-to-r from-[#041635] to-[#1b2b4b] rounded-lg p-5 text-white">
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-[13px] font-medium opacity-80">Case Progress</span>
-                  <span className="text-[20px] font-bold">{milestonePercent}%</span>
-                </div>
-                <div className="h-2 w-full bg-white/20 rounded-full overflow-hidden">
-                  <div className="h-full bg-[#fed977] rounded-full transition-all duration-700" style={{ width: `${milestonePercent}%` }}></div>
-                </div>
-                <p className="text-[11px] mt-2 opacity-70">{approvedCount} of {totalCount} milestones approved</p>
-              </div>
-            )}
-
-            {/* Drawer Tabs */}
-            <div className="flex gap-1 mb-6 bg-gray-100 rounded-lg p-1">
+            {/* Drawer Navigation Tabs */}
+            <div className="flex items-center gap-1 bg-bg-light border-b border-border-subtle px-6 pt-2 overflow-x-auto flex-shrink-0">
               {[
-                { key: 'timeline', label: 'Milestones', icon: 'timeline' },
-                { key: 'documents', label: 'Documents', icon: 'folder_shared' },
-                { key: 'invoice', label: 'Contract/Invoice', icon: 'receipt_long' },
-              ].map(tab => (
-                <button key={tab.key} onClick={() => setDrawerTab(tab.key)}
-                  className={`flex-1 py-2 px-3 rounded-md text-[12px] font-bold flex items-center justify-center gap-1.5 transition-all ${drawerTab === tab.key ? 'bg-white text-[#041635] shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                >
-                  <span className="material-symbols-outlined text-[16px]">{tab.icon}</span>{tab.label}
-                </button>
-              ))}
+                { id: 'overview', label: 'Financials & Overview', icon: '💰' },
+                { id: 'timeline', label: 'Timeline & Milestones', icon: '🗓️' },
+                { id: 'contract', label: 'Contract Terms', icon: '📜' },
+                { id: 'client', label: 'Client Profile', icon: '👤' },
+                { id: 'documents', label: 'Document Vault', icon: '📂' },
+              ].map((tabItem) => {
+                const isActive = drawerTab === tabItem.id;
+                return (
+                  <button
+                    type="button"
+                    key={tabItem.id}
+                    onClick={() => {
+                      setDrawerTab(tabItem.id);
+                      if (tabItem.id === 'contract' && selectedCase?.contract?.id) {
+                        fetchContractTimeline(selectedCase.contract.id);
+                      }
+                    }}
+                    className={`px-4 py-3 text-xs font-bold transition flex items-center gap-2 border-b-2 whitespace-nowrap ${
+                      isActive
+                        ? 'border-navy-primary text-navy-primary bg-white rounded-t-xl shadow-2xs'
+                        : 'border-transparent text-gray-500 hover:text-navy-primary'
+                    }`}
+                  >
+                    <span>{tabItem.icon}</span>
+                    <span>{tabItem.label}</span>
+                  </button>
+                );
+              })}
             </div>
 
-            {/* Milestones Tab */}
-            {drawerTab === 'timeline' && (
-              <div>
-                {/* Create Milestone Form */}
-                <div className="mb-6 border border-dashed border-[#755b00] rounded-lg p-4 bg-[#fffdf5]">
-                  <h5 className="text-[13px] font-bold text-[#041635] mb-3 flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-[16px] text-[#755b00]">add_circle</span> Submit New Milestone
-                  </h5>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
-                    <input
-                      type="text"
-                      value={newMilestone.title}
-                      onChange={e => setNewMilestone(prev => ({ ...prev, title: e.target.value }))}
-                      placeholder="Milestone title (e.g., 'Filed initial petition')"
-                      className="md:col-span-2 px-3 py-2 border border-gray-300 rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-[#755b00]/30 focus:border-[#755b00]"
-                    />
-                    <input
-                      type="number"
-                      value={newMilestone.milestone_fee}
-                      onChange={e => setNewMilestone(prev => ({ ...prev, milestone_fee: e.target.value }))}
-                      placeholder="Fee (BDT)"
-                      className="px-3 py-2 border border-gray-300 rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-[#755b00]/30 focus:border-[#755b00]"
-                    />
+            {/* Drawer Body Area */}
+            <div className="flex-1 overflow-y-auto p-6 bg-bg-light/40 space-y-6">
+              {/* Tab 1: Financials & Overview */}
+              {drawerTab === 'overview' && (
+                <div className="space-y-6">
+                  <PaymentSummary caseData={selectedCase} payments={payments} />
+
+                  <div className="bg-white rounded-2xl border border-border-subtle p-6 shadow-sm space-y-4">
+                    <h4 className="font-serif font-bold text-base text-navy-primary flex items-center gap-2">
+                      <span>📝</span>
+                      <span>Case Description & Objectives</span>
+                    </h4>
+                    <p className="text-xs sm:text-sm text-gray-600 leading-relaxed whitespace-pre-wrap">
+                      {selectedCase.description || 'No detailed background notes provided for this case matter.'}
+                    </p>
                   </div>
-                  <textarea
-                    value={newMilestone.description}
-                    onChange={e => setNewMilestone(prev => ({ ...prev, description: e.target.value }))}
-                    placeholder="Description (optional)"
-                    rows={2}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-[13px] mb-3 focus:outline-none focus:ring-2 focus:ring-[#755b00]/30 focus:border-[#755b00] resize-none"
-                  />
-                  <button
-                    onClick={handleSubmitMilestone}
-                    disabled={submittingMilestone || !newMilestone.title.trim()}
-                    className="w-full bg-[#041635] text-white py-2 rounded-lg text-[12px] font-bold hover:bg-[#1b2b4b] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">send</span>
-                    {submittingMilestone ? 'Submitting...' : 'Submit to Client for Review'}
-                  </button>
                 </div>
+              )}
 
-                {/* Milestone Timeline */}
-                {milestoneLoading ? (
-                  <div className="text-center py-8 text-gray-400 animate-pulse">Loading milestones...</div>
-                ) : milestones.length === 0 ? (
-                  <div className="text-center py-8">
-                    <span className="material-symbols-outlined text-4xl text-gray-300 mb-2 block">timeline</span>
-                    <p className="text-gray-500 text-[13px]">No milestones yet. Submit your first milestone above.</p>
-                  </div>
-                ) : (
-                  <div className="relative pl-8 space-y-6 before:content-[''] before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-0.5 before:bg-gray-200">
-                    {milestones.map((m, i) => {
-                      const dotColor = m.status === 'approved' ? 'bg-green-500' 
-                        : m.status === 'rejected' ? 'bg-red-500'
-                        : m.status === 'revision_requested' ? 'bg-amber-500'
-                        : m.status === 'submitted' ? 'bg-blue-500 animate-pulse'
-                        : 'bg-gray-400';
+              {/* Tab 2: Timeline & Milestones */}
+              {drawerTab === 'timeline' && (
+                <div className="space-y-6">
+                  {milestoneLoading && (
+                    <div className="p-3 bg-blue-50/80 border border-blue-200 rounded-xl flex items-center gap-2 text-xs font-bold text-blue-700 animate-pulse">
+                      <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
+                      <span>Refreshing live milestone records from database...</span>
+                    </div>
+                  )}
+                  <TimelineCard caseData={selectedCase} milestones={milestones} />
 
-                      return (
-                        <div key={m.id} className="relative">
-                          <div className={`absolute -left-[27px] top-1 w-4 h-4 rounded-full border-4 border-white shadow-sm ${dotColor}`}>
-                            {m.status === 'approved' && (
-                              <span className="material-symbols-outlined text-white text-[8px] absolute inset-0 flex items-center justify-center" style={{fontVariationSettings: "'FILL' 1"}}>check</span>
-                            )}
-                          </div>
-                          <div className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-sm transition-shadow">
-                            <div className="flex justify-between items-start mb-1">
-                              <div>
-                                <p className="font-bold text-[14px] text-[#041635]">{m.title}</p>
-                                {Number(m.milestone_fee || 0) > 0 && (
-                                  <span className="text-xs font-bold text-[#10b981]">Fee: BDT {Number(m.milestone_fee).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-                                )}
-                              </div>
-                              {getStatusBadge(m.status)}
-                            </div>
-                            {m.description && <p className="text-gray-500 text-[12px] mb-2">{m.description}</p>}
-                            <p className="text-gray-400 text-[11px]">Submitted {new Date(m.submitted_at || m.created_at).toLocaleDateString()}</p>
-                            {m.reviewed_at && <p className="text-gray-400 text-[11px]">Reviewed {new Date(m.reviewed_at).toLocaleDateString()}</p>}
-                            
-                            {/* Client feedback */}
-                            {m.client_feedback && (
-                              <div className="mt-3 bg-amber-50 border border-amber-200 rounded p-3">
-                                <p className="text-[11px] font-bold text-amber-800 mb-1">Client Feedback:</p>
-                                <p className="text-[12px] text-amber-700">{m.client_feedback}</p>
-                              </div>
-                            )}
-
-                            {/* Resubmit button for rejected/revision_requested */}
-                            {(m.status === 'rejected' || m.status === 'revision_requested') && (
-                              <button
-                                onClick={() => handleResubmitMilestone(m.id)}
-                                className="mt-3 px-3 py-1.5 bg-[#041635] text-white text-[11px] font-bold rounded-lg hover:bg-[#1b2b4b] transition-colors flex items-center gap-1"
-                              >
-                                <span className="material-symbols-outlined text-[14px]">refresh</span> Resubmit
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Documents Tab */}
-            {drawerTab === 'documents' && (
-              <div>
-                <div className="space-y-3">
-                  {documents.filter(doc => doc.case_id === selectedCase.id).length === 0 ? (
-                     <p className="text-sm text-gray-500 italic text-center py-8">No documents linked to this case yet.</p>
-                  ) : (
-                    documents.filter(doc => doc.case_id === selectedCase.id).map(doc => (
-                      <div key={doc.id} onClick={() => window.open(doc.storage_url, '_blank')} className="flex items-center justify-between p-3 rounded-lg border border-gray-200 bg-[#f8f9ff] hover:bg-[#eef4ff] transition-colors cursor-pointer group">
-                        <div className="flex items-center gap-3">
-                          <span className="material-symbols-outlined text-blue-600 bg-blue-50 p-2 rounded">article</span>
-                          <div>
-                            <p className="text-[13px] font-bold text-[#041635]">{doc.file_name}</p>
-                            <p className="text-[11px] text-gray-500">{(doc.file_size / 1024).toFixed(1)} KB • Uploaded {new Date(doc.uploaded_at).toLocaleDateString('default', { month: 'short', day: 'numeric' })}</p>
-                          </div>
-                        </div>
-                        <span className="material-symbols-outlined text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity">download</span>
+                  {/* Add Milestone Form (only if real case) */}
+                  {typeof selectedCase.id === 'string' && !selectedCase.id.startsWith('contract_') && !selectedCase.id.startsWith('consultation_') && (
+                    <form onSubmit={handleCreateMilestone} className="bg-white rounded-2xl border border-border-subtle p-6 shadow-sm space-y-4">
+                      <div className="flex items-center justify-between border-b border-border-subtle pb-3">
+                        <h4 className="font-serif font-bold text-base text-navy-primary flex items-center gap-2">
+                          <span>➕</span>
+                          <span>Track New Case Milestone</span>
+                        </h4>
+                        <span className="text-[11px] text-gray-500 font-semibold">Client Visible</span>
                       </div>
-                    ))
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1 sm:col-span-2">
+                          <label className="text-xs font-bold text-navy-primary">Milestone Title *</label>
+                          <input
+                            type="text"
+                            value={newMilestone.title}
+                            onChange={(e) => setNewMilestone({ ...newMilestone, title: e.target.value })}
+                            placeholder="e.g., Drafting High Court Writ Petition"
+                            className="w-full px-3 py-2 bg-bg-light border border-border-subtle rounded-xl text-xs font-semibold focus:outline-none focus:border-navy-primary"
+                            required
+                          />
+                        </div>
+
+                        <div className="space-y-1 sm:col-span-2">
+                          <label className="text-xs font-bold text-navy-primary">Description / Scope of Work</label>
+                          <textarea
+                            value={newMilestone.description}
+                            onChange={(e) => setNewMilestone({ ...newMilestone, description: e.target.value })}
+                            placeholder="Detailed work items to be completed during this stage..."
+                            rows="2"
+                            className="w-full px-3 py-2 bg-bg-light border border-border-subtle rounded-xl text-xs font-semibold focus:outline-none focus:border-navy-primary resize-none"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-xs font-bold text-navy-primary">Milestone Fee (BDT)</label>
+                          <input
+                            type="number"
+                            value={newMilestone.milestone_fee}
+                            onChange={(e) => setNewMilestone({ ...newMilestone, milestone_fee: e.target.value })}
+                            placeholder="0"
+                            className="w-full px-3 py-2 bg-bg-light border border-border-subtle rounded-xl text-xs font-semibold focus:outline-none focus:border-navy-primary"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-xs font-bold text-navy-primary">Target Due Date</label>
+                          <input
+                            type="date"
+                            value={newMilestone.due_date}
+                            onChange={(e) => setNewMilestone({ ...newMilestone, due_date: e.target.value })}
+                            className="w-full px-3 py-2 bg-bg-light border border-border-subtle rounded-xl text-xs font-semibold focus:outline-none focus:border-navy-primary"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="pt-2 flex justify-end">
+                        <button
+                          type="submit"
+                          disabled={submittingMilestone}
+                          className="px-5 py-2.5 bg-navy-primary hover:bg-navy-secondary text-white rounded-xl text-xs font-bold shadow-sm transition disabled:opacity-50 flex items-center gap-2"
+                        >
+                          <span className="material-symbols-outlined text-sm">add</span>
+                          <span>{submittingMilestone ? 'Adding...' : 'Add Case Milestone'}</span>
+                        </button>
+                      </div>
+                    </form>
                   )}
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Invoice Tab */}
-            {drawerTab === 'invoice' && (
-              <div>
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="bg-[#041635] p-5 text-white flex justify-between items-center">
-                     <div>
-                       <h3 className="text-lg font-bold">Case Contract & Fee Details</h3>
-                       <p className="text-xs text-blue-200 mt-0.5">Ref: #{String(selectedCase.id).substring(0, 8).toUpperCase()}</p>
-                     </div>
+              {/* Tab 3: Contract Terms & Workflow */}
+              {drawerTab === 'contract' && (
+                <div className="space-y-6">
+                  <ContractInfo contract={selectedCase.contract} agreedFee={selectedCase.agreed_fee} />
+
+                  {/* Contract Workflow Actions */}
+                  {selectedCase.contract && (
+                    <div className="bg-white rounded-2xl border border-border-subtle p-6 shadow-sm space-y-4">
+                      <h4 className="font-serif font-bold text-base text-navy-primary flex items-center gap-2">
+                        <span>⚙️</span><span>Contract Workflow</span>
+                      </h4>
+
+                      {/* Accept Contract */}
+                      {['Pending Review', 'PENDING_CONTRACT', 'Draft', 'Pending_Signature'].includes(selectedCase.contract.status) && (
+                        <button
+                          onClick={() => handleLawyerAcceptContract(selectedCase.contract.id)}
+                          disabled={submittingContractAction}
+                          className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                          <span className="material-symbols-outlined text-sm">handshake</span>
+                          {submittingContractAction ? 'Processing...' : 'Accept Contract & Start Work'}
+                        </button>
+                      )}
+
+                      {/* Progress Update */}
+                      {['Active', 'ACTIVE', 'active'].includes(selectedCase.contract.status) && (
+                        <>
+                          {contractAction === 'progress' ? (
+                            <form onSubmit={handleAddProgressUpdate} className="space-y-3">
+                              <input
+                                type="text" required value={progressTitle}
+                                onChange={e => setProgressTitle(e.target.value)}
+                                placeholder="Progress update title *"
+                                className="w-full px-3 py-2 border border-border-subtle rounded-xl text-xs focus:outline-none focus:border-navy-primary"
+                              />
+                              <textarea
+                                value={progressNote} onChange={e => setProgressNote(e.target.value)}
+                                placeholder="Details (optional)"
+                                rows={2}
+                                className="w-full px-3 py-2 border border-border-subtle rounded-xl text-xs focus:outline-none focus:border-navy-primary resize-none"
+                              />
+                              <div className="flex gap-2">
+                                <button type="submit" disabled={submittingContractAction}
+                                  className="flex-1 py-2 bg-navy-primary text-white rounded-xl text-xs font-bold disabled:opacity-50">
+                                  {submittingContractAction ? 'Sending...' : 'Send Update'}
+                                </button>
+                                <button type="button" onClick={() => setContractAction(null)}
+                                  className="px-4 py-2 border border-border-subtle rounded-xl text-xs font-bold text-gray-600">
+                                  Cancel
+                                </button>
+                              </div>
+                            </form>
+                          ) : contractAction === 'ready' ? (
+                            <div className="space-y-3">
+                              <textarea
+                                value={reviewNote} onChange={e => setReviewNote(e.target.value)}
+                                placeholder="Note to client about deliverables (optional)"
+                                rows={2}
+                                className="w-full px-3 py-2 border border-border-subtle rounded-xl text-xs focus:outline-none focus:border-navy-primary resize-none"
+                              />
+                              <div className="flex gap-2">
+                                <button onClick={() => handleMarkReadyForReview(selectedCase.contract.id)}
+                                  disabled={submittingContractAction}
+                                  className="flex-1 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold disabled:opacity-50">
+                                  {submittingContractAction ? 'Submitting...' : 'Submit for Client Review'}
+                                </button>
+                                <button onClick={() => setContractAction(null)}
+                                  className="px-4 py-2 border border-border-subtle rounded-xl text-xs font-bold text-gray-600">
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex gap-2">
+                              <button onClick={() => setContractAction('progress')}
+                                className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1">
+                                <span className="material-symbols-outlined text-sm">update</span> Add Progress Update
+                              </button>
+                              <button onClick={() => setContractAction('ready')}
+                                className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1">
+                                <span className="material-symbols-outlined text-sm">rate_review</span> Mark Ready for Review
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      {/* Contract Timeline */}
+                      {contractTimeline.length > 0 && (
+                        <div className="space-y-2 pt-2 border-t border-border-subtle">
+                          <h5 className="text-xs font-bold text-navy-primary">Contract Timeline</h5>
+                          {contractTimeline.map(entry => (
+                            <div key={entry.id} className="flex gap-3 text-xs">
+                              <span className="w-2 h-2 rounded-full bg-navy-primary mt-1.5 flex-shrink-0" />
+                              <div>
+                                <p className="font-bold text-navy-primary">{entry.title}</p>
+                                {entry.note && <p className="text-gray-500">{entry.note}</p>}
+                                <p className="text-gray-400">{new Date(entry.created_at).toLocaleString()}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tab 4: Client Profile */}
+              {drawerTab === 'client' && (
+                <ClientInfo client={selectedCase.client} rating={selectedCase.client?.rating} />
+              )}
+
+              {/* Tab 5: Document Vault */}
+              {drawerTab === 'documents' && (
+                <div className="space-y-6">
+                  {/* Upload box */}
+                  <div className="bg-white rounded-2xl border border-border-subtle p-6 shadow-sm space-y-4">
+                    <div className="flex items-center justify-between border-b border-border-subtle pb-3">
+                      <h4 className="font-serif font-bold text-base text-navy-primary flex items-center gap-2">
+                        <span>📤</span>
+                        <span>Upload Case Evidence & Briefs</span>
+                      </h4>
+                      <span className="text-[11px] font-bold text-gray-500">Encrypted Storage</span>
+                    </div>
+
+                    {typeof selectedCase.id === 'string' && (selectedCase.id.startsWith('contract_') || selectedCase.id.startsWith('consultation_')) ? (
+                      <p className="text-xs text-amber-700 bg-amber-50 p-3 rounded-xl border border-amber-200">
+                        Document uploads require a permanent case record. Please ensure the client proposal or contract is fully initiated.
+                      </p>
+                    ) : (
+                      <div className="flex items-center justify-center w-full">
+                        <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-border-subtle rounded-2xl cursor-pointer bg-bg-light/60 hover:bg-bg-light transition">
+                          <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                            <span className="material-symbols-outlined text-3xl text-gray-400 mb-1">cloud_upload</span>
+                            <p className="text-xs font-bold text-navy-primary">
+                              {uploadingDoc ? 'Uploading Document to Vault...' : 'Click to select or drag PDF, Word, or Image files'}
+                            </p>
+                            <p className="text-[10px] text-gray-400 mt-0.5">Maximum file size 15 MB per document</p>
+                          </div>
+                          <input type="file" className="hidden" onChange={handleUploadDocument} disabled={uploadingDoc} />
+                        </label>
+                      </div>
+                    )}
                   </div>
-                  <div className="p-6 space-y-5">
-                     <div className="flex flex-col md:flex-row justify-between border-b border-gray-100 pb-5 gap-3">
-                       <div>
-                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Client</p>
-                         <p className="text-[15px] font-bold text-[#041635] mt-0.5">{selectedCase.client?.name || 'Unassigned Client'}</p>
-                       </div>
-                       <div className="md:text-right">
-                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Agreement Status</p>
-                         <span className="inline-block mt-1 px-2.5 py-0.5 bg-green-100 text-green-800 rounded-full text-[10px] font-bold uppercase tracking-wider">{selectedCase.status || 'Active'}</span>
-                       </div>
-                     </div>
-                     <div>
-                       <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Scope of Legal Work</p>
-                       <p className="text-gray-800 text-[13px] whitespace-pre-wrap bg-gray-50 p-4 rounded-xl border border-gray-100 leading-relaxed">
-                         {selectedCase.contract?.scope_of_work || selectedCase.contract?.terms || selectedCase.description || 'General Legal Representation / Consultation'}
-                       </p>
-                     </div>
-                     <div className="bg-[#041635]/5 p-5 rounded-xl border border-[#041635]/10 flex justify-between items-center">
-                       <span className="font-bold text-[#041635] text-[13px]">Total Agreed Fee</span>
-                       <span className="text-[20px] font-black text-[#755b00]">BDT {Number(selectedCase.agreed_fee || 0).toLocaleString()}</span>
-                     </div>
+
+                  {/* Existing Documents List */}
+                  <div className="bg-white rounded-2xl border border-border-subtle p-6 shadow-sm space-y-4">
+                    <h4 className="font-serif font-bold text-base text-navy-primary flex items-center gap-2">
+                      <span>🗂️</span>
+                      <span>Case Document Vault ({documents.filter((d) => String(d.case_id) === String(selectedCase.id)).length})</span>
+                    </h4>
+
+                    {documents.filter((d) => String(d.case_id) === String(selectedCase.id)).length === 0 ? (
+                      <div className="text-center py-6 bg-bg-light/50 rounded-xl border border-dashed border-border-subtle">
+                        <span className="text-2xl block mb-1">📂</span>
+                        <h5 className="font-bold text-navy-primary text-xs">No Documents Uploaded Yet</h5>
+                        <p className="text-[11px] text-gray-500">Briefs, court notices, and client evidence files will appear here.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {documents
+                          .filter((d) => String(d.case_id) === String(selectedCase.id))
+                          .map((doc) => (
+                            <div key={doc.id} className="p-3.5 rounded-xl border border-border-subtle/80 bg-bg-light/40 flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <span className="w-10 h-10 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center font-bold text-sm flex-shrink-0 border border-blue-200">
+                                  {doc.file_type?.toUpperCase() || 'DOC'}
+                                </span>
+                                <div className="min-w-0">
+                                  <h6 className="font-bold text-xs text-navy-primary truncate">{doc.title || doc.file_name || 'Document'}</h6>
+                                  <span className="text-[10px] text-gray-400 block">
+                                    Uploaded: {new Date(doc.uploaded_at || doc.created_at || Date.now()).toLocaleDateString()}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <a
+                                href={doc.file_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-3 py-1.5 rounded-xl bg-white hover:bg-bg-light text-navy-primary text-xs font-bold border border-border-subtle shadow-2xs transition flex items-center gap-1 flex-shrink-0"
+                              >
+                                <span className="material-symbols-outlined text-sm">open_in_new</span>
+                                <span>Open</span>
+                              </a>
+                            </div>
+                          ))}
+                      </div>
+                    )}
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
-        )}
-      </aside>
+              )}
+            </div>
 
+            {/* Drawer Footer Actions */}
+            <div className="p-4 bg-white border-t border-border-subtle flex items-center justify-between gap-3 flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => handleOpenMessages(selectedCase)}
+                className="px-4 py-2.5 rounded-xl bg-bg-light hover:bg-gray-200 text-navy-primary text-xs font-bold transition border border-border-subtle flex items-center gap-2"
+              >
+                <span className="material-symbols-outlined text-sm">chat</span>
+                <span>Message Client</span>
+              </button>
+
+              <div className="flex items-center gap-2">
+                {(String(selectedCase.status).toLowerCase() === 'active' || String(selectedCase.status).toLowerCase().includes('progress')) && (
+                  <button
+                    type="button"
+                    onClick={() => handleMarkComplete(selectedCase)}
+                    disabled={isCompleting}
+                    className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <span className="material-symbols-outlined text-sm">check_circle</span>
+                    <span>{isCompleting ? 'Closing...' : 'Mark Complete'}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSelectedCase(null)}
+                  className="px-5 py-2.5 rounded-xl bg-navy-primary hover:bg-navy-secondary text-white text-xs font-bold transition shadow-xs"
+                >
+                  Close Drawer
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
