@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
 import { useAuth } from '../../context/AuthContext';
 import toast from 'react-hot-toast';
+import { realtimeSync } from '../../services/realtimeSync.service';
 
 const LawyerAppointmentsView = () => {
   const { user } = useAuth();
@@ -139,14 +140,6 @@ const LawyerAppointmentsView = () => {
 
   const handleUpdateStatus = async (id, newStatus, updateType = null, customMessage = null) => {
     try {
-      const { error } = await supabase
-        .from('appointments')
-        .update({ status: newStatus })
-        .eq('id', id);
-
-      if (error) throw error;
-
-      // Map status to update_type if not provided
       const typeMap = {
         'Upcoming': 'confirmed',
         'Completed': 'completed',
@@ -154,7 +147,6 @@ const LawyerAppointmentsView = () => {
         'In Progress': 'started',
       };
       const finalType = updateType || typeMap[newStatus] || 'custom';
-      
       const msgMap = {
         'confirmed': 'Your consultation has been confirmed by your lawyer.',
         'started': 'Your consultation session is now marked as Started / In Progress.',
@@ -164,16 +156,32 @@ const LawyerAppointmentsView = () => {
       };
       const finalMsg = customMessage || msgMap[finalType] || `Appointment status updated to ${newStatus}`;
 
-      if (user?.id) {
-        await supabase.from('consultation_updates').insert([{
-          appointment_id: id,
-          update_type: finalType,
-          message: finalMsg,
-          created_by: user.id
-        }]);
+      const { error: rpcErr } = await supabase.rpc('fn_consultation_action', {
+        p_appointment_id: id,
+        p_action: newStatus,
+        p_custom_data: { message: finalMsg }
+      });
+
+      if (rpcErr) {
+        console.warn('[LawyerAppointmentsView] fn_consultation_action failed, falling back to direct update:', rpcErr.message);
+        const { error } = await supabase
+          .from('appointments')
+          .update({ status: newStatus })
+          .eq('id', id);
+        if (error) throw error;
+
+        if (user?.id) {
+          await supabase.from('consultation_updates').insert([{
+            appointment_id: id,
+            update_type: finalType,
+            message: finalMsg,
+            created_by: user.id
+          }]);
+        }
       }
 
       toast.success(`Appointment marked as ${newStatus}`);
+      realtimeSync.broadcastCaseChange({ appointmentId: id, action: `APPOINTMENT_${newStatus.toUpperCase()}` });
       fetchAppointments();
     } catch (err) {
       console.error('Error updating status:', err);
@@ -190,12 +198,20 @@ const LawyerAppointmentsView = () => {
     e.preventDefault();
     if (!selectedApt || !meetingUrlInput.trim()) return;
     try {
-      const { error } = await supabase
-        .from('appointments')
-        .update({ google_meet_url: meetingUrlInput.trim() })
-        .eq('id', selectedApt.id);
-      if (error && error.code !== '42703') throw error;
+      const { error: rpcErr } = await supabase.rpc('fn_consultation_action', {
+        p_appointment_id: selectedApt.id,
+        p_action: 'meeting_link',
+        p_custom_data: { url: meetingUrlInput.trim() }
+      });
+      if (rpcErr) {
+        const { error } = await supabase
+          .from('appointments')
+          .update({ google_meet_url: meetingUrlInput.trim() })
+          .eq('id', selectedApt.id);
+        if (error && error.code !== '42703') throw error;
+      }
       toast.success('Meeting link saved successfully!');
+      realtimeSync.broadcastCaseChange({ appointmentId: selectedApt.id, action: 'APPOINTMENT_MEETING_LINK' });
       setMeetingModalOpen(false);
       window.open(meetingUrlInput.trim(), '_blank', 'noopener,noreferrer');
       fetchAppointments();

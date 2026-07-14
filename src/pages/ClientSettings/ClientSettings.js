@@ -94,7 +94,18 @@ const ClientSettings = ({ inline = false }) => {
     try {
       if (!e.target.files || e.target.files.length === 0) return;
       const file = e.target.files[0];
-      const fileExt = file.name.split('.').pop();
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error('File size exceeds 5MB limit.');
+        return;
+      }
+      const allowed = type === 'avatar' 
+        ? ['jpg', 'jpeg', 'png', 'webp'] 
+        : ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx'];
+      const fileExt = file.name.split('.').pop()?.toLowerCase();
+      if (!fileExt || !allowed.includes(fileExt)) {
+        toast.error(`Unsupported format. Allowed: ${allowed.join(', ').toUpperCase()}`);
+        return;
+      }
       const fileName = `${user.id}-${Math.random()}.${fileExt}`;
       const filePath = `${user.id}/${fileName}`;
       

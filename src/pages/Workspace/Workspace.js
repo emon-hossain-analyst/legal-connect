@@ -175,6 +175,17 @@ const Workspace = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('File size exceeds 5MB limit.');
+      return;
+    }
+    const allowed = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'txt', 'zip'];
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    if (!ext || !allowed.includes(ext)) {
+      toast.error(`Unsupported file format. Allowed: ${allowed.join(', ').toUpperCase()}`);
+      return;
+    }
+
     setUploadingDoc(true);
     try {
       const fileExt = file.name.split('.').pop();

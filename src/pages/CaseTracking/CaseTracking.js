@@ -2,8 +2,10 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
 import { useAuth } from '../../context/AuthContext';
+import { realtimeSync } from '../../services/realtimeSync.service';
 import toast from 'react-hot-toast';
 import styles from './CaseTracking.module.css';
+import ReviewSubmissionModal from '../../components/LawyerCaseTracking/ReviewSubmissionModal';
 
 const STATUS_COLORS = {
   open: '#10B981',              // Emerald
@@ -12,6 +14,8 @@ const STATUS_COLORS = {
   in_progress: '#2563EB',       // Blue
   active: '#2563EB',            // Blue
   confirmed: '#2563EB',         // Blue
+  under_review: '#8B5CF6',      // Violet/Purple
+  revision_requested: '#F59E0B',// Amber/Orange
   completed: '#7C3AED',         // Purple
   closed: '#6B7280',            // Gray
   cancelled: '#EF4444',         // Red
@@ -26,6 +30,8 @@ const STATUS_LABELS = {
   in_progress: 'In Progress',
   active: 'In Progress',
   confirmed: 'Consultation Active',
+  under_review: 'Under Client Review',
+  revision_requested: 'Revision Requested',
   completed: 'Completed',
   closed: 'Closed',
   cancelled: 'Cancelled',
@@ -57,6 +63,10 @@ const CaseTracking = () => {
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [sortOrder, setSortOrder] = useState('UPDATED_DESC');
   const [selectedCaseModal, setSelectedCaseModal] = useState(null);
+  const [submittingAction, setSubmittingAction] = useState(false);
+  const [revisionNoteInput, setRevisionNoteInput] = useState('');
+  const [showRevisionForm, setShowRevisionForm] = useState(false);
+  const [reviewingCase, setReviewingCase] = useState(null);
 
   const fetchDashboardData = useCallback(async (isManualRefresh = false) => {
     const clientId = user?.id || user?.auth_id;
@@ -147,6 +157,8 @@ const CaseTracking = () => {
 
       // 4. Fetch Contracts
       let contractsList = [];
+      let contractTimelineMap = {};
+      let deliverablesMap = {};
       try {
         const { data: cData } = await supabase
           .from('contracts')
@@ -157,6 +169,24 @@ const CaseTracking = () => {
           contractsList = cData;
           setContracts(cData);
           cData.forEach(cnt => { if (cnt.lawyer_id) allLawyerIds.add(cnt.lawyer_id); });
+          
+          const cntIds = cData.map(c => c.id);
+          if (cntIds.length > 0) {
+            const { data: ctData } = await supabase.from('contract_timeline').select('*').in('contract_id', cntIds).order('created_at', { ascending: true });
+            if (ctData) {
+              ctData.forEach(entry => {
+                if (!contractTimelineMap[entry.contract_id]) contractTimelineMap[entry.contract_id] = [];
+                contractTimelineMap[entry.contract_id].push(entry);
+              });
+            }
+            const { data: delivData } = await supabase.from('deliverables').select('*').in('contract_id', cntIds).order('submitted_at', { ascending: false });
+            if (delivData) {
+              delivData.forEach(entry => {
+                if (!deliverablesMap[entry.contract_id]) deliverablesMap[entry.contract_id] = [];
+                deliverablesMap[entry.contract_id].push(entry);
+              });
+            }
+          }
         }
       } catch (e) {
         console.error('Contracts fetch error:', e);
@@ -269,12 +299,22 @@ const CaseTracking = () => {
       if (contractsList.length > 0) {
         contractsList.forEach(cnt => {
           const targetKey = cnt.case_id ? String(cnt.case_id) : (cnt.job_post_id ? String(cnt.job_post_id) : null);
+          const cTimeline = contractTimelineMap[cnt.id] || [];
+          const cDeliverables = deliverablesMap[cnt.id] || [];
+          let mappedStatus = cnt.status?.toLowerCase() === 'active' ? 'in_progress' : (cnt.status === 'Pending Review' ? 'pending_acceptance' : 'open');
+          if (cnt.status === 'UNDER_CLIENT_REVIEW' || cnt.status === 'Under Client Review') mappedStatus = 'under_review';
+          else if (cnt.status === 'REVISION_REQUESTED' || cnt.status === 'Revision Requested') mappedStatus = 'revision_requested';
+          else if (cnt.status === 'COMPLETED' || cnt.status === 'Completed') mappedStatus = 'completed';
+
           if (targetKey && mergedMap.has(targetKey)) {
             const existing = mergedMap.get(targetKey);
             existing.contract = cnt;
             existing.agreed_fee = cnt.amount || cnt.agreed_amount || cnt.retainer_amount;
+            existing.contract_timeline = cTimeline;
+            existing.deliverables = cDeliverables;
             if (cnt.status === 'Active' || cnt.status === 'Signed') existing.status = 'in_progress';
             else if (cnt.status === 'Pending Review' && existing.status === 'open') existing.status = 'pending_acceptance';
+            else if (['under_review', 'revision_requested', 'completed'].includes(mappedStatus)) existing.status = mappedStatus;
           } else if (!targetKey) {
             const synthId = `contract_${cnt.id}`;
             mergedMap.set(synthId, {
@@ -283,7 +323,7 @@ const CaseTracking = () => {
               title: cnt.title || 'Legal Contract Matter',
               practice_area: cnt.fee_structure || 'Contract Representation',
               description: cnt.terms || 'Legal agreement under review.',
-              status: cnt.status?.toLowerCase() === 'active' ? 'in_progress' : (cnt.status === 'Pending Review' ? 'pending_acceptance' : 'open'),
+              status: mappedStatus,
               urgency: 'medium',
               budget: `BDT ${Number(cnt.amount || cnt.agreed_amount || 0).toLocaleString('en-IN')}`,
               created_at: cnt.created_at || new Date().toISOString(),
@@ -292,6 +332,8 @@ const CaseTracking = () => {
               lawyer: cnt.lawyer,
               lawyer_id: cnt.lawyer_id,
               contract: cnt,
+              contract_timeline: cTimeline,
+              deliverables: cDeliverables,
               milestones: []
             });
           }
@@ -341,11 +383,33 @@ const CaseTracking = () => {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [user, caseId]);
+  }, [user?.id, user?.auth_id, caseId]);
 
   useEffect(() => {
     fetchDashboardData();
-  }, [fetchDashboardData]);
+
+    const clientId = user?.id || user?.auth_id;
+    if (!clientId) return;
+
+    const unsubWorkflow = realtimeSync.subscribeCaseWorkflow(() => {
+      fetchDashboardData();
+    });
+
+    const channel = supabase
+      .channel(`client_cases_live_${clientId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cases' }, () => fetchDashboardData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'contracts' }, () => fetchDashboardData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'contract_timeline' }, () => fetchDashboardData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deliverables' }, () => fetchDashboardData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'case_milestones' }, () => fetchDashboardData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'job_proposals' }, () => fetchDashboardData())
+      .subscribe();
+
+    return () => {
+      unsubWorkflow();
+      supabase.removeChannel(channel);
+    };
+  }, [fetchDashboardData, user?.id, user?.auth_id]);
 
   // Live Statistics Calculation
   const stats = useMemo(() => {
@@ -426,17 +490,107 @@ const CaseTracking = () => {
 
   const handleContractAction = async (contractId, action) => {
     try {
+      if (action === 'accept') {
+        const { error: rpcErr } = await supabase.rpc('fn_approve_contract', { p_contract_id: contractId });
+        if (rpcErr) {
+          console.warn('[CaseTracking] fn_approve_contract failed, falling back to direct update:', rpcErr.message);
+          const { error } = await supabase
+            .from('contracts')
+            .update({ status: 'Active', fee_locked: true })
+            .eq('id', contractId);
+          if (error) throw error;
+        }
+        toast.success('Contract Accepted! Retainer representation initialized.');
+      } else if (action === 'negotiate') {
+        const { error: rpcErr } = await supabase.rpc('fn_request_contract_changes', {
+          p_contract_id: contractId,
+          p_note: 'Client requested terms/fee negotiation.'
+        });
+        if (rpcErr) {
+          const { error } = await supabase
+            .from('contracts')
+            .update({ status: 'Negotiation Requested' })
+            .eq('id', contractId);
+          if (error) throw error;
+        }
+        toast.success('Negotiation requested! Lawyer notified.');
+      } else if (action === 'decline') {
+        const { error: rpcErr } = await supabase.rpc('fn_terminate_contract', {
+          p_contract_id: contractId,
+          p_reason: 'Client declined representation contract.'
+        });
+        if (rpcErr) {
+          const { error } = await supabase
+            .from('contracts')
+            .update({ status: 'Terminated' })
+            .eq('id', contractId);
+          if (error) throw error;
+        }
+        toast.success('Contract declined / terminated.');
+      }
+
       const newStatus = action === 'accept' ? 'Active' : action === 'decline' ? 'Terminated' : 'Negotiation Requested';
-      const { error } = await supabase
-        .from('contracts')
-        .update({ status: newStatus, ...(action === 'accept' ? { fee_locked: true } : {}) })
-        .eq('id', contractId);
-      if (error) throw error;
-      toast.success(`Contract ${action === 'accept' ? 'Accepted! Retainer initialized.' : newStatus}`);
       setContracts(prev => prev.map(c => c.id === contractId ? { ...c, status: newStatus } : c));
+      realtimeSync.broadcastCaseChange({ contractId, action: `CONTRACT_${action.toUpperCase()}` });
       fetchDashboardData(true);
     } catch (err) {
+      console.error('[CaseTracking] handleContractAction error:', err);
       toast.error('Failed to update contract status');
+    }
+  };
+
+  const handleClientAcceptDelivery = async (contractId, caseItem) => {
+    const targetId = contractId || caseItem?.contract?.id;
+    if (!targetId) {
+      toast.error('No active contract found for this case.');
+      return;
+    }
+    setSubmittingAction(true);
+    try {
+      const { error } = await supabase.rpc('fn_client_approve_delivery', { p_contract_id: targetId });
+      if (error) throw error;
+      toast.success('Work approved! Case completed and payment released.');
+      if (selectedCaseModal && (selectedCaseModal.contract?.id === targetId || selectedCaseModal.id === caseItem?.id)) {
+        setSelectedCaseModal(prev => prev ? ({ ...prev, status: 'completed', contract: { ...prev.contract, status: 'COMPLETED' } }) : null);
+      }
+      fetchDashboardData();
+      realtimeSync.broadcastCaseChange({ action: 'DELIVERY_ACCEPTED', contractId: targetId, caseId: caseItem?.id });
+    } catch (err) {
+      toast.error(`Approval failed: ${err.message}`);
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  const handleClientRequestRevision = async (contractId, caseItem) => {
+    const targetId = contractId || caseItem?.contract?.id;
+    if (!targetId) {
+      toast.error('No active contract found for this case.');
+      return;
+    }
+    if (!revisionNoteInput.trim()) {
+      toast.error('Please enter the revision instructions for your lawyer.');
+      return;
+    }
+    setSubmittingAction(true);
+    try {
+      const { error } = await supabase.rpc('fn_client_request_revision', {
+        p_contract_id: targetId,
+        p_note: revisionNoteInput.trim()
+      });
+      if (error) throw error;
+      toast.success('Revision requested! Lawyer has been notified.');
+      setRevisionNoteInput('');
+      setShowRevisionForm(false);
+      if (selectedCaseModal && (selectedCaseModal.contract?.id === targetId || selectedCaseModal.id === caseItem?.id)) {
+        setSelectedCaseModal(prev => prev ? ({ ...prev, status: 'revision_requested', contract: { ...prev.contract, status: 'REVISION_REQUESTED' } }) : null);
+      }
+      fetchDashboardData();
+      realtimeSync.broadcastCaseChange({ action: 'REVISION_REQUESTED', contractId: targetId, caseId: caseItem?.id });
+    } catch (err) {
+      toast.error(`Request failed: ${err.message}`);
+    } finally {
+      setSubmittingAction(false);
     }
   };
 
@@ -577,8 +731,9 @@ const CaseTracking = () => {
                     <h3 style={{ fontSize: '16px', fontWeight: 'bold', color: '#0F2A5E', margin: 0 }}>{cnt.title}</h3>
                     <p style={{ fontSize: '13px', color: '#4B5563', margin: '4px 0' }}>Assigned Advocate: Adv. {cnt.lawyer?.name || cnt.lawyer?.full_name || 'Legal Council'}</p>
                   </div>
-                  <div style={{ display: 'flex', gap: '8px' }}>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                     <button onClick={() => handleContractAction(cnt.id, 'negotiate')} className={styles.btnSecondary} style={{ fontSize: '12px' }}>Request Revision</button>
+                    <button onClick={() => handleContractAction(cnt.id, 'decline')} className={styles.btnSecondary} style={{ fontSize: '12px', borderColor: '#EF4444', color: '#EF4444' }}>Decline</button>
                     <button onClick={() => handleContractAction(cnt.id, 'accept')} className={styles.btnPrimary} style={{ fontSize: '12px', background: '#0F2A5E' }}>Accept & Pay Retainer</button>
                   </div>
                 </div>
@@ -767,9 +922,38 @@ const CaseTracking = () => {
                         View Contract
                       </button>
                     )}
+                    {(item.contract || item.status === 'under_review' || item.status === 'revision_requested') && ['UNDER_CLIENT_REVIEW', 'Active', 'in_progress', 'REVISION_REQUESTED', 'under_review', 'revision_requested'].includes(item.contract?.status || item.status) && (
+                      <>
+                        <button
+                          onClick={() => handleClientAcceptDelivery(item.contract?.id, item)}
+                          disabled={submittingAction}
+                          style={{ padding: '8px 12px', background: '#10B981', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}
+                        >
+                          ✓ Accept Delivery
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedCaseModal(item);
+                            setShowRevisionForm(true);
+                          }}
+                          disabled={submittingAction}
+                          style={{ padding: '8px 12px', background: '#EF4444', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}
+                        >
+                          ✎ Request Revision
+                        </button>
+                      </>
+                    )}
                     {(item.status === 'open' || item.status === 'pending') && (
                       <button onClick={() => handleCancelCase(item)} className={styles.btnDanger}>
                         Cancel Case
+                      </button>
+                    )}
+                    {(item.status?.toLowerCase() === 'completed' || item.contract?.status?.toLowerCase() === 'completed') && (
+                      <button
+                        onClick={() => setReviewingCase(item)}
+                        style={{ padding: '8px 14px', background: '#F59E0B', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', boxShadow: '0 2px 6px rgba(245, 158, 11, 0.3)' }}
+                      >
+                        ★ Review Advocate
                       </button>
                     )}
                   </div>
@@ -877,6 +1061,33 @@ const CaseTracking = () => {
                     </span>
                   </div>
 
+                  {/* Dynamic Database Timeline Updates */}
+                  {selectedCaseModal.contract_timeline && selectedCaseModal.contract_timeline.map((entry, idx) => (
+                    <div key={`tl_${entry.id || idx}`} className={styles.timelineItem}>
+                      <div className={`${styles.timelineDot} ${styles.dotCompleted}`} style={{ background: '#3B82F6', color: '#fff' }}>📝</div>
+                      <span className={styles.timelineTitle}>Update: {entry.title || entry.event_type || 'Advocate Progress Report'}</span>
+                      <span className={styles.timelineDesc}>{entry.description || entry.notes}</span>
+                      <span className={styles.timelineDate}>{new Date(entry.created_at).toLocaleString()}</span>
+                    </div>
+                  ))}
+
+                  {/* Dynamic Submitted Deliverables */}
+                  {selectedCaseModal.deliverables && selectedCaseModal.deliverables.map((deliv, idx) => (
+                    <div key={`dl_${deliv.id || idx}`} className={styles.timelineItem}>
+                      <div className={`${styles.timelineDot} ${deliv.status === 'APPROVED' ? styles.dotCompleted : styles.dotActive}`} style={{ background: deliv.status === 'APPROVED' ? '#10B981' : '#8B5CF6', color: '#fff' }}>📦</div>
+                      <span className={styles.timelineTitle}>Deliverable: {deliv.title || 'Legal Work Package'} ({deliv.status})</span>
+                      <span className={styles.timelineDesc}>{deliv.description || deliv.client_note || deliv.rejection_reason || 'No additional notes provided.'}</span>
+                      {deliv.file_url && (
+                        <div style={{ marginTop: '8px' }}>
+                          <a href={deliv.file_url} target="_blank" rel="noopener noreferrer" style={{ color: '#2563EB', fontWeight: 'bold', fontSize: '13px' }}>
+                            📄 Download Deliverable Document
+                          </a>
+                        </div>
+                      )}
+                      <span className={styles.timelineDate}>Submitted: {new Date(deliv.submitted_at || deliv.created_at).toLocaleString()}</span>
+                    </div>
+                  ))}
+
                   {/* Stage 6: Case Completed */}
                   <div className={styles.timelineItem}>
                     <div className={`${styles.timelineDot} ${selectedCaseModal.status === 'completed' ? styles.dotCompleted : styles.dotPending}`}>
@@ -890,6 +1101,75 @@ const CaseTracking = () => {
                   </div>
                 </div>
               </div>
+
+              {/* Client Review & Actions Box inside Modal */}
+              {(selectedCaseModal.contract || selectedCaseModal.status === 'under_review' || selectedCaseModal.status === 'revision_requested' || showRevisionForm) && ['UNDER_CLIENT_REVIEW', 'Active', 'in_progress', 'REVISION_REQUESTED', 'under_review', 'revision_requested'].includes(selectedCaseModal.contract?.status || selectedCaseModal.status) && (
+                <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '12px', padding: '16px', marginTop: '20px' }}>
+                  <h4 style={{ margin: '0 0 8px 0', color: '#1E40AF', fontSize: '15px' }}>⚡ Client Review & Delivery Acceptance</h4>
+                  <p style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#334155' }}>
+                    Review the progress updates and deliverables submitted by your advocate. Once you accept the delivery, the contract is marked completed and payment is released.
+                  </p>
+
+                  {showRevisionForm && (
+                    <div style={{ marginBottom: '16px', background: '#fff', padding: '12px', borderRadius: '8px', border: '1px solid #CBD5E1' }}>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', color: '#0F2A5E', marginBottom: '6px' }}>
+                        Specify Revision Instructions for Advocate:
+                      </label>
+                      <textarea
+                        value={revisionNoteInput}
+                        onChange={(e) => setRevisionNoteInput(e.target.value)}
+                        placeholder="Please detail what changes or further legal work you need before accepting..."
+                        style={{ width: '100%', height: '80px', padding: '8px', borderRadius: '6px', border: '1px solid #94A3B8', fontSize: '13px', fontFamily: 'inherit' }}
+                      />
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '8px', justifyContent: 'flex-end' }}>
+                        <button onClick={() => setShowRevisionForm(false)} className={styles.btnSecondary} style={{ fontSize: '12px' }}>Cancel</button>
+                        <button
+                          onClick={() => handleClientRequestRevision(selectedCaseModal.contract?.id, selectedCaseModal)}
+                          disabled={submittingAction}
+                          style={{ padding: '8px 14px', background: '#EF4444', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}
+                        >
+                          {submittingAction ? 'Submitting...' : 'Send Revision Request'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => handleClientAcceptDelivery(selectedCaseModal.contract?.id, selectedCaseModal)}
+                      disabled={submittingAction}
+                      style={{ padding: '10px 18px', background: '#10B981', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      ✓ Accept Delivery & Release Payment
+                    </button>
+                    {!showRevisionForm && (
+                      <button
+                        onClick={() => setShowRevisionForm(true)}
+                        disabled={submittingAction}
+                        style={{ padding: '10px 18px', background: '#EF4444', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }}
+                      >
+                        ✎ Request Revision
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Review Box when case is completed */}
+              {(selectedCaseModal.status?.toLowerCase() === 'completed' || selectedCaseModal.contract?.status?.toLowerCase() === 'completed') && (
+                <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '12px', padding: '18px', marginTop: '20px' }}>
+                  <h4 style={{ margin: '0 0 6px 0', color: '#B45309', fontSize: '15px' }}>★ Advocate Performance Review</h4>
+                  <p style={{ margin: '0 0 14px 0', fontSize: '13px', color: '#78350F' }}>
+                    This legal matter is marked completed. You can submit or update your verified rating and written feedback for your advocate.
+                  </p>
+                  <button
+                    onClick={() => { setSelectedCaseModal(null); setReviewingCase(selectedCaseModal); }}
+                    style={{ padding: '10px 20px', background: '#F59E0B', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', boxShadow: '0 4px 12px rgba(245, 158, 11, 0.25)' }}
+                  >
+                    ★ Write / Edit Review
+                  </button>
+                </div>
+              )}
 
               {/* Modal Footer Actions */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', borderTop: '1px solid #E5E7EB', paddingTop: '16px' }}>
@@ -905,6 +1185,18 @@ const CaseTracking = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {reviewingCase && (
+        <ReviewSubmissionModal
+          caseItem={reviewingCase}
+          contractId={reviewingCase.contract?.id || reviewingCase.contract_id}
+          lawyerId={reviewingCase.lawyer_id || reviewingCase.contract?.lawyer_id}
+          onClose={() => setReviewingCase(null)}
+          onSuccess={() => {
+            fetchDashboardData();
+          }}
+        />
       )}
     </div>
   );

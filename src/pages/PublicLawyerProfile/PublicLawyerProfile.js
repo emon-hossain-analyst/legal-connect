@@ -61,24 +61,53 @@ const PageSkeleton = () => (
 
 // ── Review card ───────────────────────────────────────────────────────────────
 const ReviewCard = ({ review }) => {
-  const initials = review.client_name?.charAt(0).toUpperCase() || '?';
+  const displayName = review.is_anonymous ? 'Verified Client (Anonymous)' : (review.client_name || 'Verified Client');
+  const initials = review.is_anonymous ? 'A' : (displayName.charAt(0).toUpperCase() || '?');
+  const lawyerReply = review.replies?.[0]?.reply_text || review.lawyer_response;
+
   return (
     <div className={styles.reviewCard}>
-      <div className={styles.reviewTop}>
-        <div className={styles.reviewAvatar} style={{ background: avatarBg(review.client_name) }}>
+      <div className={styles.reviewHeader}>
+        <div className={styles.reviewAvatar} style={{ background: avatarBg(displayName) }}>
           {initials}
         </div>
         <div className={styles.reviewMeta}>
-          <span className={styles.reviewerName}>{review.client_name}</span>
+          <div className={styles.reviewerNameRow}>
+            <span className={styles.reviewerName}>{displayName}</span>
+            {review.is_verified_client !== false && (
+              <span className={styles.verifiedBadge}>✓ Verified Client</span>
+            )}
+          </div>
           <Stars value={review.rating} />
+          <div className={styles.reviewDate}>{fmtDate(review.created_at)}</div>
         </div>
-        <span className={styles.reviewDate}>{fmtDate(review.created_at)}</span>
       </div>
+
+      {(review.rating_communication || review.rating_professionalism || review.rating_expertise || review.rating_responsiveness || review.rating_value) && (
+        <div className={styles.reviewSubRatings}>
+          {review.rating_communication && (
+            <span className={styles.subRatingItem}>Communication: <strong className={styles.subRatingScore}>{review.rating_communication}★</strong></span>
+          )}
+          {review.rating_professionalism && (
+            <span className={styles.subRatingItem}>Professionalism: <strong className={styles.subRatingScore}>{review.rating_professionalism}★</strong></span>
+          )}
+          {review.rating_expertise && (
+            <span className={styles.subRatingItem}>Expertise: <strong className={styles.subRatingScore}>{review.rating_expertise}★</strong></span>
+          )}
+          {review.rating_responsiveness && (
+            <span className={styles.subRatingItem}>Responsiveness: <strong className={styles.subRatingScore}>{review.rating_responsiveness}★</strong></span>
+          )}
+          {review.rating_value && (
+            <span className={styles.subRatingItem}>Value: <strong className={styles.subRatingScore}>{review.rating_value}★</strong></span>
+          )}
+        </div>
+      )}
+
       <p className={styles.reviewText}>{review.comment}</p>
-      {review.lawyer_response && (
+      {lawyerReply && (
         <div className={styles.lawyerReply}>
-          <span className={styles.replyLabel}>Lawyer's Response</span>
-          <p>{review.lawyer_response}</p>
+          <span className={styles.replyLabel}>Advocate's Response</span>
+          <p>{lawyerReply}</p>
         </div>
       )}
     </div>
@@ -177,6 +206,7 @@ const PublicLawyerProfile = () => {
 
   const [reviews, setReviews] = useState([]);
   const [reviewsVisible, setReviewsVisible] = useState(5);
+  const [reviewFilter, setReviewFilter] = useState('All');
   const [updates, setUpdates] = useState([]);
   const [contract, setContract] = useState(null);
 
@@ -208,22 +238,89 @@ const PublicLawyerProfile = () => {
   }, [slug]);
 
   // Load reviews + updates in parallel after lawyer loads
+  const fetchReviews = useCallback(async (lawyerId) => {
+    if (!lawyerId) return;
+    try {
+      // Primary query: production `reviews` table with replies
+      const { data: revData, error: revErr } = await supabase
+        .from('reviews')
+        .select('*, replies:review_replies(*)')
+        .eq('lawyer_id', lawyerId)
+        .eq('is_hidden', false)
+        .order('created_at', { ascending: false });
+
+      if (!revErr && revData && revData.length > 0) {
+        setReviews(revData);
+        return;
+      }
+
+      // Fallback query: legacy `feedback` table
+      const { data: fbData } = await supabase
+        .from('feedback')
+        .select('*, client:users!feedback_client_id_fkey(name)')
+        .eq('lawyer_id', lawyerId)
+        .order('created_at', { ascending: false });
+      const mapped = (fbData || []).map(r => ({
+        ...r,
+        client_name: r.client_name || r.client?.name || 'Verified Client',
+        is_verified_client: true
+      }));
+      setReviews(mapped);
+    } catch (e) {
+      setReviews([]);
+    }
+  }, []);
+
   useEffect(() => {
     if (!lawyer) return;
 
+    fetchReviews(lawyer.user_id);
+
+    // Setup Supabase Realtime subscription for live review & reply synchronization
+    const channel = supabase.channel(`public_profile_reviews_${lawyer.user_id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews', filter: `lawyer_id=eq.${lawyer.user_id}` }, () => {
+        fetchReviews(lawyer.user_id);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'review_replies', filter: `lawyer_id=eq.${lawyer.user_id}` }, () => {
+        fetchReviews(lawyer.user_id);
+      })
+      .subscribe();
+
     const fetchRelatedData = async () => {
-      // Fetch reviews
+      // Fetch legal updates by this lawyer
       try {
         const { data } = await supabase
-          .from('feedback')
-          .select('*, client:users!feedback_client_id_fkey(name)')
-          .eq('lawyer_id', lawyer.user_id)
-          .order('created_at', { ascending: false });
-        const mapped = (data || []).map(r => ({ ...r, client_name: r.client?.name || 'Client' }));
-        setReviews(mapped);
+          .from('legal_updates')
+          .select('*')
+          .eq('author_id', lawyer.user_id)
+          .order('created_at', { ascending: false })
+          .limit(3);
+        setUpdates(data || []);
       } catch (e) {
-        setReviews([]);
+        setUpdates([]);
       }
+
+      // Check for existing contract if logged in as client
+      if (isLoggedIn && isClient) {
+        try {
+          const { data } = await supabase
+            .from('contracts')
+            .select('id, lawyer_id, status')
+            .eq('lawyer_id', lawyer.user_id)
+            .eq('status', 'active')
+            .limit(1)
+            .maybeSingle();
+          setContract(data || null);
+        } catch (e) {}
+      }
+    };
+
+    fetchRelatedData();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [lawyer, isLoggedIn, isClient, fetchReviews]);
 
       // Fetch legal updates by this lawyer
       try {
@@ -418,18 +515,74 @@ const PublicLawyerProfile = () => {
 
           {/* Reviews */}
           <div className={styles.card}>
-            <h2 className={styles.sectionHeading}>Client Reviews</h2>
-            {reviews.length === 0 ? (
+            <h2 className={styles.sectionHeading}>
+              <span>Client Reviews & Ratings</span>
+              <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#64748B' }}>
+                {reviews.length} {reviews.length === 1 ? 'Review' : 'Reviews'}
+              </span>
+            </h2>
+
+            {/* Star Rating Summary Box */}
+            {reviews.length > 0 && (
+              <div className={styles.ratingSummaryBox}>
+                <div className={styles.overallScoreBox}>
+                  <div className={styles.overallNumber}>
+                    {(reviews.reduce((acc, r) => acc + Number(r.rating || 0), 0) / reviews.length).toFixed(1)}
+                  </div>
+                  <Stars value={Math.round(reviews.reduce((acc, r) => acc + Number(r.rating || 0), 0) / reviews.length)} />
+                  <div className={styles.overallCount}>Based on {reviews.length} verified {reviews.length === 1 ? 'client' : 'clients'}</div>
+                </div>
+
+                <div className={styles.distributionBars}>
+                  {[5, 4, 3, 2, 1].map((star) => {
+                    const count = reviews.filter(r => Number(r.rating) === star).length;
+                    const pct = Math.round((count / reviews.length) * 100);
+                    return (
+                      <div key={star} className={styles.distRow}>
+                        <span style={{ width: '28px' }}>{star}★</span>
+                        <div className={styles.distTrack}>
+                          <div className={styles.distFill} style={{ width: `${pct}%` }} />
+                        </div>
+                        <span style={{ width: '36px', textAlign: 'right', color: '#64748B' }}>{count}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Star Filter Pills */}
+            {reviews.length > 0 && (
+              <div className={styles.filterBar}>
+                {['All', '5', '4', '3', '2', '1'].map((star) => (
+                  <button
+                    key={star}
+                    type="button"
+                    className={`${styles.filterPill} ${reviewFilter === star ? styles.filterPillActive : ''}`}
+                    onClick={() => { setReviewFilter(star); setReviewsVisible(5); }}
+                  >
+                    {star === 'All' ? `All Reviews (${reviews.length})` : `${star}★ (${reviews.filter(r => Number(r.rating) === Number(star)).length})`}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {reviews.filter(r => reviewFilter === 'All' || Number(r.rating) === Number(reviewFilter)).length === 0 ? (
               <p className={styles.emptyState}>
-                No reviews yet — be the first to work with this lawyer.
+                {reviews.length === 0
+                  ? 'No reviews yet — be the first verified client to review this advocate.'
+                  : `No ${reviewFilter}-star reviews found.`}
               </p>
             ) : (
               <>
-                {reviews.slice(0, reviewsVisible).map(r => <ReviewCard key={r.id} review={r} />)}
-                {reviewsVisible < reviews.length && (
+                {reviews
+                  .filter(r => reviewFilter === 'All' || Number(r.rating) === Number(reviewFilter))
+                  .slice(0, reviewsVisible)
+                  .map(r => <ReviewCard key={r.id} review={r} />)}
+                {reviewsVisible < reviews.filter(r => reviewFilter === 'All' || Number(r.rating) === Number(reviewFilter)).length && (
                   <button className={styles.loadMore}
                     onClick={() => setReviewsVisible(v => v + 5)}>
-                    Load more reviews ({reviews.length - reviewsVisible} remaining)
+                    Load more reviews ({reviews.filter(r => reviewFilter === 'All' || Number(r.rating) === Number(reviewFilter)).length - reviewsVisible} remaining)
                   </button>
                 )}
               </>

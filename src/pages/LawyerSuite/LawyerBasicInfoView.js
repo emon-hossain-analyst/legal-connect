@@ -124,8 +124,18 @@ const LawyerBasicInfoView = () => {
   const handleAvatarUpload = async (e) => {
     try {
       if (!e.target.files || e.target.files.length === 0) return;
-      setUploadingAvatar(true);
       const file = e.target.files[0];
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error('Image size exceeds 5MB limit.');
+        return;
+      }
+      const allowed = ['jpg', 'jpeg', 'png', 'webp'];
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      if (!ext || !allowed.includes(ext)) {
+        toast.error('Unsupported image format. Please use JPG, PNG, or WEBP.');
+        return;
+      }
+      setUploadingAvatar(true);
       const fileExt = file.name.split('.').pop();
       const fileName = `${user.id}-${Math.random()}.${fileExt}`;
       const filePath = `public/${fileName}`;

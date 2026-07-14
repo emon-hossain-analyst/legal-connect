@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase';
+import { realtimeSync } from '../../services/realtimeSync.service';
 import toast from 'react-hot-toast';
 
 // Reusable Components
@@ -45,6 +46,10 @@ const LawyerCasesView = () => {
 
   // Selected Case & Modal/Drawer State
   const [selectedCase, setSelectedCase] = useState(null);
+  const selectedCaseRef = useRef(null);
+  useEffect(() => {
+    selectedCaseRef.current = selectedCase;
+  }, [selectedCase]);
   const [drawerTab, setDrawerTab] = useState('overview'); // overview | timeline | contract | client | documents
   const [isCompleting, setIsCompleting] = useState(false);
 
@@ -375,15 +380,28 @@ const LawyerCasesView = () => {
     const authId = user?.id || user?.auth_id;
     if (!authId) return;
 
+    const unsubWorkflow = realtimeSync.subscribeCaseWorkflow(() => {
+      fetchCasesData();
+      if (selectedCaseRef.current?.contract?.id) {
+        fetchContractTimeline(selectedCaseRef.current.contract.id);
+      }
+    });
+
     const channel = supabase
       .channel(`lawyer_cases_live_${authId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'cases' }, () => fetchCasesData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'contracts' }, () => fetchCasesData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'contract_timeline' }, () => {
+        fetchCasesData();
+        if (selectedCaseRef.current?.contract?.id) fetchContractTimeline(selectedCaseRef.current.contract.id);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deliverables' }, () => fetchCasesData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, () => fetchCasesData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'case_milestones' }, () => fetchCasesData())
       .subscribe();
 
     return () => {
+      unsubWorkflow();
       supabase.removeChannel(channel);
     };
   }, [fetchCasesData, user?.id, user?.auth_id]);
@@ -577,48 +595,66 @@ const LawyerCasesView = () => {
       toast.success('Contract accepted! Work has begun.');
       fetchCasesData();
       fetchContractTimeline(contractId);
+      realtimeSync.broadcastCaseChange({ action: 'CONTRACT_ACCEPTED', contractId, caseId: selectedCase?.id });
     } catch (err) { toast.error(`Failed: ${err.message}`); }
     finally { setSubmittingContractAction(false); }
   };
 
   const handleAddProgressUpdate = async (e) => {
     e.preventDefault();
-    if (!selectedCase?.contract?.id || !progressTitle.trim()) return;
+    const targetContractId = selectedCase?.contract?.id;
+    if (!targetContractId) {
+      toast.error('A linked contract is required to send progress updates.');
+      return;
+    }
+    if (!progressTitle.trim()) {
+      toast.error('Please enter a progress update title.');
+      return;
+    }
     setSubmittingContractAction(true);
     try {
       const { error } = await supabase.rpc('fn_add_progress_update', {
-        p_contract_id: selectedCase.contract.id,
+        p_contract_id: targetContractId,
         p_title: progressTitle.trim(),
         p_note: progressNote.trim() || null,
       });
       if (error) throw error;
       toast.success('Progress update sent to client!');
       setProgressTitle(''); setProgressNote(''); setContractAction(null);
-      fetchContractTimeline(selectedCase.contract.id);
+      fetchContractTimeline(targetContractId);
+      fetchCasesData();
+      realtimeSync.broadcastCaseChange({ action: 'PROGRESS_UPDATE', contractId: targetContractId, caseId: selectedCase?.id });
     } catch (err) { toast.error(`Failed: ${err.message}`); }
     finally { setSubmittingContractAction(false); }
   };
 
   const handleMarkReadyForReview = async (contractId) => {
+    const targetId = contractId || selectedCase?.contract?.id;
+    if (!targetId) {
+      toast.error('Contract ID not found for delivery submission.');
+      return;
+    }
     setSubmittingContractAction(true);
     try {
       const { error } = await supabase.rpc('fn_mark_ready_for_review', {
-        p_contract_id: contractId,
+        p_contract_id: targetId,
         p_note: reviewNote.trim() || null,
       });
       if (error) throw error;
       toast.success('Work submitted for client review!');
       setReviewNote(''); setContractAction(null);
-      fetchCasesData(); fetchContractTimeline(contractId);
+      fetchCasesData(); fetchContractTimeline(targetId);
+      realtimeSync.broadcastCaseChange({ action: 'DELIVERY_SUBMITTED', contractId: targetId, caseId: selectedCase?.id });
     } catch (err) { toast.error(`Failed: ${err.message}`); }
     finally { setSubmittingContractAction(false); }
   };
 
-  const handleOpenDetails = (caseItem, tab = 'overview') => {
+  const handleOpenDetails = (caseItem, tab = 'overview', action = null) => {
     setSelectedCase(caseItem);
     setDrawerTab(tab);
+    if (action) setContractAction(action);
     fetchMilestones(caseItem.id);
-    if (tab === 'contract' && caseItem.contract?.id) {
+    if (caseItem.contract?.id) {
       fetchContractTimeline(caseItem.contract.id);
     }
   };
@@ -636,23 +672,26 @@ const LawyerCasesView = () => {
     if (!caseItem?.id) return;
     setIsCompleting(true);
     try {
-      if (typeof caseItem.id === 'string' && (caseItem.id.startsWith('contract_') || caseItem.id.startsWith('consultation_'))) {
-        toast.success('Case matter marked as resolved!');
-        setCases((prev) => prev.map((c) => (c.id === caseItem.id ? { ...c, status: 'completed' } : c)));
-      } else {
-        // Use fn_complete_case RPC
-        const { error: rpcErr } = await supabase.rpc('fn_complete_case', { p_case_id: caseItem.id });
-        if (rpcErr) {
-          // Fallback to direct update
+      // Invoke fn_complete_case which handles UUIDs, 'contract_UUID', and 'consultation_UUID'
+      const { error: rpcErr } = await supabase.rpc('fn_complete_case', { p_case_id: String(caseItem.id) });
+      if (rpcErr) {
+        console.warn('[LawyerCasesView] fn_complete_case failed, trying direct table update:', rpcErr.message);
+        if (!String(caseItem.id).startsWith('contract_') && !String(caseItem.id).startsWith('consultation_')) {
           const { error: updErr } = await supabase
             .from('cases')
             .update({ status: 'Completed', updated_at: new Date().toISOString() })
             .eq('id', caseItem.id);
           if (updErr) throw updErr;
+        } else {
+          toast.success('Case marked as completed.');
+          setCases((prev) => prev.map((c) => (c.id === caseItem.id ? { ...c, status: 'completed' } : c)));
+          setIsCompleting(false);
+          return;
         }
-        toast.success('Case marked as completed successfully!');
-        fetchCasesData();
       }
+      toast.success('Case marked as completed successfully!');
+      realtimeSync.broadcastCaseChange({ caseId: caseItem.id, action: 'CASE_COMPLETED' });
+      fetchCasesData();
       if (selectedCase?.id === caseItem.id) {
         setSelectedCase((prev) => ({ ...prev, status: 'completed' }));
       }
@@ -667,10 +706,7 @@ const LawyerCasesView = () => {
   // Add Milestone inside Drawer
   const handleCreateMilestone = async (e) => {
     e.preventDefault();
-    if (!selectedCase?.id || typeof selectedCase.id !== 'string' || selectedCase.id.startsWith('contract_')) {
-      toast.error('Real case record required to add database milestones.');
-      return;
-    }
+    if (!selectedCase?.id) return;
     if (!newMilestone.title.trim()) {
       toast.error('Please enter a milestone title.');
       return;
@@ -678,8 +714,25 @@ const LawyerCasesView = () => {
 
     setSubmittingMilestone(true);
     try {
+      let targetCaseId = selectedCase.id;
+      if (typeof targetCaseId === 'string' && (targetCaseId.startsWith('contract_') || targetCaseId.startsWith('consultation_'))) {
+        const rawId = targetCaseId.startsWith('contract_') ? targetCaseId.replace('contract_', '') : targetCaseId.replace('consultation_', '');
+        if (targetCaseId.startsWith('contract_')) {
+          const { data: cData } = await supabase.from('contracts').select('case_id').eq('id', rawId).maybeSingle();
+          if (cData?.case_id) targetCaseId = cData.case_id;
+        } else {
+          const { data: csData } = await supabase.from('cases').select('id').eq('linked_appointment_id', rawId).maybeSingle();
+          if (csData?.id) targetCaseId = csData.id;
+        }
+      }
+
+      if (typeof targetCaseId === 'string' && (targetCaseId.startsWith('contract_') || targetCaseId.startsWith('consultation_'))) {
+        toast.error('Could not resolve underlying case ID yet. Please refresh the page after contract sync.');
+        return;
+      }
+
       const payload = {
-        case_id: selectedCase.id,
+        case_id: targetCaseId,
         title: newMilestone.title.trim(),
         description: newMilestone.description.trim(),
         milestone_fee: newMilestone.milestone_fee ? Number(newMilestone.milestone_fee) : 0,
@@ -694,6 +747,7 @@ const LawyerCasesView = () => {
       toast.success('New milestone added successfully!');
       setMilestones((prev) => [...(data || [payload]), ...prev]);
       setNewMilestone({ title: '', description: '', milestone_fee: '', due_date: '' });
+      realtimeSync.broadcastCaseChange({ caseId: targetCaseId, action: 'MILESTONE_CREATED' });
       fetchCasesData();
     } catch (err) {
       console.error('Milestone insert error:', err);
@@ -706,14 +760,40 @@ const LawyerCasesView = () => {
   // Document upload handler — uses correct documents table schema
   const handleUploadDocument = async (e) => {
     const file = e.target.files?.[0];
-    if (!file || !selectedCase?.id || typeof selectedCase.id !== 'string' || selectedCase.id.startsWith('contract_')) {
+    if (!file || !selectedCase?.id) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('File size exceeds 5MB limit.');
+      return;
+    }
+    const allowed = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'txt', 'zip'];
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    if (!ext || !allowed.includes(ext)) {
+      toast.error(`Unsupported file format. Allowed: ${allowed.join(', ').toUpperCase()}`);
       return;
     }
 
     setUploadingDoc(true);
     try {
+      let targetCaseId = selectedCase.id;
+      if (typeof targetCaseId === 'string' && (targetCaseId.startsWith('contract_') || targetCaseId.startsWith('consultation_'))) {
+        const rawId = targetCaseId.startsWith('contract_') ? targetCaseId.replace('contract_', '') : targetCaseId.replace('consultation_', '');
+        if (targetCaseId.startsWith('contract_')) {
+          const { data: cData } = await supabase.from('contracts').select('case_id').eq('id', rawId).maybeSingle();
+          if (cData?.case_id) targetCaseId = cData.case_id;
+        } else {
+          const { data: csData } = await supabase.from('cases').select('id').eq('linked_appointment_id', rawId).maybeSingle();
+          if (csData?.id) targetCaseId = csData.id;
+        }
+      }
+
+      if (typeof targetCaseId === 'string' && (targetCaseId.startsWith('contract_') || targetCaseId.startsWith('consultation_'))) {
+        toast.error('Could not resolve underlying case ID yet. Please refresh the page after contract sync.');
+        return;
+      }
+
       const fileExt = file.name.split('.').pop();
-      const fileName = `case_${selectedCase.id}/${Date.now()}_${file.name}`;
+      const fileName = `case_${targetCaseId}/${Date.now()}_${file.name}`;
       const { error: storageErr } = await supabase.storage.from('case-documents').upload(fileName, file);
       if (storageErr) throw storageErr;
 
@@ -722,7 +802,7 @@ const LawyerCasesView = () => {
 
       // Use correct documents table schema: client_id, lawyer_id, file_name, storage_url
       const docPayload = {
-        case_id: selectedCase.id,
+        case_id: targetCaseId,
         client_id: selectedCase.client_id || selectedCase.client?.id,
         lawyer_id: user.id,
         file_name: file.name,
@@ -736,6 +816,7 @@ const LawyerCasesView = () => {
 
       toast.success('Document uploaded to vault successfully!');
       setDocuments((prev) => [...(newDoc || [docPayload]), ...prev]);
+      realtimeSync.broadcastCaseChange({ caseId: targetCaseId, action: 'DOCUMENT_UPLOADED' });
     } catch (err) {
       console.error('Doc upload error:', err);
       toast.error(`Upload failed: ${err.message}`);
@@ -840,6 +921,8 @@ const LawyerCasesView = () => {
                       onOpenDocuments={(item) => handleOpenDetails(item, 'documents')}
                       onOpenTimeline={(item) => handleOpenDetails(item, 'timeline')}
                       onOpenInvoice={(item) => handleOpenDetails(item, 'overview')}
+                      onUpdateProgress={(item) => handleOpenDetails(item, 'contract', 'progress')}
+                      onSubmitDelivery={(item) => handleOpenDetails(item, 'contract', 'ready')}
                       onMarkComplete={handleMarkComplete}
                       isCompleting={isCompleting && selectedCase?.id === cItem.id}
                     />
@@ -978,7 +1061,12 @@ const LawyerCasesView = () => {
                       <span>Refreshing live milestone records from database...</span>
                     </div>
                   )}
-                  <TimelineCard caseData={selectedCase} milestones={milestones} />
+                  <TimelineCard
+                    caseData={selectedCase}
+                    milestones={milestones}
+                    contractTimeline={contractTimeline}
+                    deliverables={documents}
+                  />
 
                   {/* Add Milestone Form (only if real case) */}
                   {typeof selectedCase.id === 'string' && !selectedCase.id.startsWith('contract_') && !selectedCase.id.startsWith('consultation_') && (
@@ -1076,8 +1164,8 @@ const LawyerCasesView = () => {
                         </button>
                       )}
 
-                      {/* Progress Update */}
-                      {['Active', 'ACTIVE', 'active'].includes(selectedCase.contract.status) && (
+                      {/* Progress Update & Delivery Submission */}
+                      {['Active', 'ACTIVE', 'active', 'Signed', 'SIGNED', 'in_progress', 'in progress', 'REVISION_REQUESTED', 'Revision Requested', 'ongoing'].includes(String(selectedCase.contract.status || selectedCase.status)) && (
                         <>
                           {contractAction === 'progress' ? (
                             <form onSubmit={handleAddProgressUpdate} className="space-y-3">

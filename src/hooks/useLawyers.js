@@ -59,7 +59,7 @@ export const useLawyers = (filters = {}) => {
       let query = supabase
         .from('lawyers')
         .select('*', { count: 'exact' })
-        .eq('is_verified', true);   // use simple eq — avoids enum cast issues
+        .or('is_verified.eq.true,verification_status.eq.verified'); // Check both columns for definitive visibility
 
       if (filters.specialization) query = query.ilike('specialization', `%${filters.specialization}%`);
       if (filters.rating)         query = query.gte('avg_rating', filters.rating);

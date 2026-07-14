@@ -9,7 +9,6 @@ import DashboardLayout from './components/DashboardLayout/DashboardLayout';
 import AdminLayout from './components/AdminLayout/AdminLayout';
 import LawyerSuiteLayout from './components/Layout/LawyerSuiteLayout';
 import ClientPortalLayout from './components/ClientPortalLayout/ClientPortalLayout';
-import PlaceholderPage from './pages/Placeholder/PlaceholderPage';
 import './App.css';
 
 // Eager imports for instant routing without loading flashes
@@ -35,6 +34,14 @@ import AIAdvisor from './pages/AIAdvisor/AIAdvisor';
 import ClientSettings from './pages/ClientSettings/ClientSettings';
 import ClientMyPosts from './pages/ClientMyPosts/ClientMyPosts';
 
+// Public Pages (Replaced Placeholders)
+import PricingPage from './pages/Public/PricingPage';
+import FAQPage from './pages/Public/FAQPage';
+import HelpCenterPage from './pages/Public/HelpCenterPage';
+import LegalDocumentsPage from './pages/Public/LegalDocumentsPage';
+import LawyerVerificationInfoPage from './pages/Public/LawyerVerificationInfoPage';
+import LawyerSuccessStoriesPage from './pages/Public/LawyerSuccessStoriesPage';
+
 import AdminOverview from './pages/Admin/AdminOverview';
 import UsersManagement from './pages/Admin/UsersManagement';
 import LawyersManagement from './pages/Admin/LawyersManagement';
@@ -44,6 +51,7 @@ import CategoryManagement from './pages/Admin/CategoryManagement';
 import JobsManagement from './pages/Admin/JobsManagement';
 import FlaggedReviews from './pages/Admin/FlaggedReviews';
 import AdminSettings from './pages/Admin/AdminSettings';
+import AdminNotifications from './pages/Admin/AdminNotifications';
 
 import LawyerDashboardView from './pages/LawyerSuite/LawyerDashboardView';
 import LawyerBasicInfoView from './pages/LawyerSuite/LawyerBasicInfoView';
@@ -60,6 +68,7 @@ import LawyerBillingView from './pages/LawyerSuite/LawyerBillingView';
 import LawyerNotificationsView from './pages/LawyerSuite/LawyerNotificationsView';
 import LawyerPrivacyView from './pages/LawyerSuite/LawyerPrivacyView';
 import LawyerProposalsView from './pages/LawyerSuite/LawyerProposalsView';
+import FeedbackRatings from './pages/FeedbackRatings/FeedbackRatings';
 
 const GlobalLoadingFallback = () => (
   <div className="min-h-screen bg-[#F4F6F9] flex flex-col items-center justify-center p-8 text-center animate-fadeIn">
@@ -137,17 +146,17 @@ function App() {
                   <Route path="/job-board" element={<Navigate to="/jobs" replace />} />
                   <Route path="/jobs/:id" element={<ErrorBoundary><JobDetail /></ErrorBoundary>} />
                   
-                  {/* Placeholder pages for footer targets */}
-                  <Route path="/pricing" element={<PlaceholderPage title="Pricing & Plans" />} />
-                  <Route path="/faq" element={<PlaceholderPage title="Frequently Asked Questions (FAQ)" />} />
-                  <Route path="/help" element={<PlaceholderPage title="Help Center" />} />
-                  <Route path="/privacy-policy" element={<PlaceholderPage title="Privacy Policy" />} />
+                  {/* Production public pages */}
+                  <Route path="/pricing" element={<ErrorBoundary><PricingPage /></ErrorBoundary>} />
+                  <Route path="/faq" element={<ErrorBoundary><FAQPage /></ErrorBoundary>} />
+                  <Route path="/help" element={<ErrorBoundary><HelpCenterPage /></ErrorBoundary>} />
+                  <Route path="/privacy-policy" element={<ErrorBoundary><LegalDocumentsPage initialTab="privacy" /></ErrorBoundary>} />
                   <Route path="/privacy" element={<Navigate to="/privacy-policy" replace />} />
-                  <Route path="/terms-of-service" element={<PlaceholderPage title="Terms of Service" />} />
+                  <Route path="/terms-of-service" element={<ErrorBoundary><LegalDocumentsPage initialTab="terms" /></ErrorBoundary>} />
                   <Route path="/terms" element={<Navigate to="/terms-of-service" replace />} />
-                  <Route path="/cookie-policy" element={<PlaceholderPage title="Cookie Policy" />} />
-                  <Route path="/lawyers/verification-info" element={<PlaceholderPage title="Lawyer Verification Process" />} />
-                  <Route path="/lawyers/success-stories" element={<PlaceholderPage title="Lawyer Success Stories" />} />
+                  <Route path="/cookie-policy" element={<ErrorBoundary><LegalDocumentsPage initialTab="cookie" /></ErrorBoundary>} />
+                  <Route path="/lawyers/verification-info" element={<ErrorBoundary><LawyerVerificationInfoPage /></ErrorBoundary>} />
+                  <Route path="/lawyers/success-stories" element={<ErrorBoundary><LawyerSuccessStoriesPage /></ErrorBoundary>} />
                   
                   <Route path="/book-appointment/:lawyerId?" element={<BookAppointmentRedirect />} />
                   <Route path="/feedback" element={<Navigate to="/lawyers" replace />} />
@@ -212,7 +221,7 @@ function App() {
                     <Route path="categories" element={<CategoryManagement />} />
                     <Route path="jobs" element={<JobsManagement />} />
                     <Route path="reviews" element={<FlaggedReviews />} />
-                    <Route path="notifications" element={<div>Admin Notifications Page (Placeholder)</div>} />
+                    <Route path="notifications" element={<AdminNotifications />} />
                     <Route path="settings" element={<AdminSettings />} />
                   </Route>
 
@@ -232,6 +241,7 @@ function App() {
                     <Route path="schedule/settings" element={<ConsultationSettings />} />
                     <Route path="portfolio" element={<LawyerPortfolioView />} />
                     <Route path="analytics" element={<LawyerAnalyticsView />} />
+                    <Route path="reviews" element={<FeedbackRatings standalone={true} />} />
                     <Route path="cases" element={<LawyerCasesView />} />
                     <Route path="cases/:caseId" element={<LawyerCasesView />} />
                     <Route path="proposals" element={<LawyerProposalsView />} />

@@ -10,6 +10,8 @@ const CaseCard = ({
   onOpenTimeline,
   onOpenInvoice,
   onMarkComplete,
+  onUpdateProgress,
+  onSubmitDelivery,
   isCompleting = false,
 }) => {
   if (!caseItem) return null;
@@ -56,13 +58,19 @@ const CaseCard = ({
   const unreadCount = Number(caseItem.unread_messages_count || 0);
 
   // Allowed actions based on status
-  const normStatus = String(status).toLowerCase();
+  const normStatus = String(status || '').toLowerCase();
+  const normContractStatus = String(caseItem.contract?.status || '').toLowerCase();
   const isActiveOrProgress =
     normStatus === 'active' ||
     normStatus === 'in progress' ||
     normStatus === 'in_progress' ||
     normStatus.includes('ongoing') ||
-    normStatus === 'confirmed';
+    normStatus === 'confirmed' ||
+    normContractStatus === 'active' ||
+    normContractStatus === 'signed' ||
+    normContractStatus === 'in_progress' ||
+    normContractStatus === 'revision_requested' ||
+    normStatus === 'revision_requested';
 
   return (
     <div className="bg-white rounded-2xl border border-border-subtle p-6 shadow-sm hover:shadow-md transition duration-200 flex flex-col justify-between space-y-5">
@@ -211,18 +219,40 @@ const CaseCard = ({
           </button>
         </div>
 
-        {/* Mark Complete Action (Only if active/in progress) */}
+        {/* Active Case Actions Toolbar */}
         {isActiveOrProgress && (
-          <button
-            type="button"
-            onClick={() => onMarkComplete && onMarkComplete(caseItem)}
-            disabled={isCompleting}
-            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold transition shadow-2xs flex items-center gap-1.5"
-            title="Mark this case as successfully resolved/completed"
-          >
-            <span className="material-symbols-outlined text-sm">check_circle</span>
-            <span>{isCompleting ? 'Closing...' : 'Mark Complete'}</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onUpdateProgress && onUpdateProgress(caseItem)}
+              className="px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition shadow-2xs flex items-center gap-1.5"
+              title="Log new progress update for client timeline"
+            >
+              <span className="material-symbols-outlined text-sm">bolt</span>
+              <span>Update Progress</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onSubmitDelivery && onSubmitDelivery(caseItem)}
+              className="px-3 py-2 rounded-xl bg-navy-primary hover:bg-navy-secondary text-white text-xs font-bold transition shadow-2xs flex items-center gap-1.5"
+              title="Submit deliverables & mark work ready for client review"
+            >
+              <span className="material-symbols-outlined text-sm">publish</span>
+              <span>Submit Delivery</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onMarkComplete && onMarkComplete(caseItem)}
+              disabled={isCompleting}
+              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold transition shadow-2xs flex items-center gap-1.5"
+              title="Mark this case as successfully resolved/completed"
+            >
+              <span className="material-symbols-outlined text-sm">check_circle</span>
+              <span>{isCompleting ? 'Closing...' : 'Mark Complete'}</span>
+            </button>
+          </div>
         )}
       </div>
     </div>

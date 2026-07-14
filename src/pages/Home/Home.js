@@ -60,11 +60,11 @@ const Home = () => {
       } else {
         if (rpcErr) console.warn('[Home] search_lawyers RPC error:', rpcErr.message);
 
-        // Direct query — use simple eq(is_verified, true) to avoid enum cast issues
+        // Direct query — check both columns for definitive visibility
         const { data: rawLawyers, error: rawErr } = await supabase
           .from('lawyers')
           .select('*')
-          .eq('is_verified', true)
+          .or('is_verified.eq.true,verification_status.eq.verified')
           .order('avg_rating', { ascending: false })
           .limit(8);
 

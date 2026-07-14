@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
 import toast from 'react-hot-toast';
 import { realtimeSync } from '../../services/realtimeSync.service';
+import FeedbackRatings from '../FeedbackRatings/FeedbackRatings';
 
 const timeAgo = (date) => {
   const s = Math.floor((Date.now() - new Date(date)) / 1000);
@@ -254,65 +255,11 @@ const PublicLawyerProfile = () => {
 
           {activeTab === 'reviews' && (
             <div className="space-y-8 block animate-fadeIn">
-              <div className="bg-surface-container-lowest rounded-xl border border-outline-variant p-8">
-                <div className="grid md:grid-cols-3 gap-8 items-center">
-                  <div className="text-center border-r border-outline-variant">
-                    <span className="block text-4xl font-bold text-primary">{avgRating}</span>
-                    <div className="flex justify-center text-secondary mb-1">
-                      {[1,2,3,4,5].map(n => (
-                         <span key={n} className="material-symbols-outlined" style={{ fontVariationSettings: `'FILL' ${Number(avgRating) >= n ? 1 : 0}` }}>star</span>
-                      ))}
-                    </div>
-                    <span className="text-on-surface-variant text-label-md">Based on {totalReviews} Reviews</span>
-                  </div>
-                  <div className="md:col-span-2 space-y-3">
-                    {starBreakdown.map(({ star, pct }) => (
-                      <div key={star} className="flex items-center gap-4">
-                        <span className="text-label-md w-8">{star}★</span>
-                        <div className="flex-grow h-2 bg-surface-container rounded-full overflow-hidden">
-                          <div className="h-full bg-secondary" style={{ width: `${pct}%` }}></div>
-                        </div>
-                        <span className="text-label-md w-8">{pct}%</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              
-              <div className="space-y-4">
-                {reviewsData.length === 0 ? (
-                   <p className="text-on-surface-variant p-4">No reviews yet for this lawyer.</p>
-                ) : (
-                  reviewsData.map(r => (
-                    <div key={r.id} className="bg-surface-container-lowest rounded-xl border border-outline-variant p-6 space-y-4">
-                      <div className="flex justify-between">
-                        <div className="flex gap-3 items-center">
-                          <div className="w-10 h-10 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center font-bold text-label-md">
-                            {r.client_name?.charAt(0).toUpperCase() || 'A'}
-                          </div>
-                          <div>
-                            <p className="font-bold text-primary font-body-sm">{r.client_name || 'Anonymous Client'}</p>
-                            <p className="text-on-surface-variant text-[11px] uppercase">Client • {timeAgo(r.created_at)}</p>
-                          </div>
-                        </div>
-                        <div className="text-secondary flex">
-                          {[1,2,3,4,5].map(n => (
-                            <span key={n} className="material-symbols-outlined text-sm" style={{ fontVariationSettings: `'FILL' ${r.rating >= n ? 1 : 0}` }}>star</span>
-                          ))}
-                        </div>
-                      </div>
-                      <p className="text-on-surface-variant font-body-sm italic">"{r.comment}"</p>
-                      
-                      {r.lawyer_response && (
-                        <div className="bg-surface-container-low rounded-lg p-4 ml-6 border-l-4 border-secondary">
-                          <p className="text-primary font-bold text-[11px] uppercase mb-1">Reply from Lawyer</p>
-                          <p className="text-on-surface-variant font-body-sm">"{r.lawyer_response}"</p>
-                        </div>
-                      )}
-                    </div>
-                  ))
-                )}
-              </div>
+              <FeedbackRatings
+                lawyerUserId={lawyer?.user_id || lawyer?.id}
+                lawyerName={lawyer?.full_name || lawyer?.name}
+                standalone={false}
+              />
             </div>
           )}
         </div>

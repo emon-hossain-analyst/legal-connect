@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase';
+import { realtimeSync } from '../../services/realtimeSync.service';
 import { SkeletonDashboard } from '../../components/Skeleton/Skeleton';
 
 const ClientDashboard = ({ inline = false }) => {
@@ -240,9 +241,17 @@ const ClientDashboard = ({ inline = false }) => {
 
   const handleCancelAppointment = async (id) => {
     try {
-      const { error } = await supabase.from('appointments').update({ status: 'cancelled' }).eq('id', id);
-      if (error) throw error;
+      const { error: rpcErr } = await supabase.rpc('fn_consultation_action', {
+        p_appointment_id: id,
+        p_action: 'Cancelled',
+        p_custom_data: { message: 'Client cancelled consultation appointment.' }
+      });
+      if (rpcErr) {
+        const { error } = await supabase.from('appointments').update({ status: 'cancelled' }).eq('id', id);
+        if (error) throw error;
+      }
       toast.success('Appointment cancelled');
+      realtimeSync.broadcastCaseChange({ appointmentId: id, action: 'APPOINTMENT_CANCELLED' });
       fetchDashboardData();
     } catch (err) {
       toast.error('Failed to cancel appointment');
@@ -252,14 +261,27 @@ const ClientDashboard = ({ inline = false }) => {
   const handleAcceptLawyerOffer = async (apt) => {
     try {
       const agreedFee = apt.proposed_fee_lawyer || apt.fee_amount || 3000;
-      const { error } = await supabase.from('appointments').update({
-        status: 'confirmed',
-        agreed_fee: agreedFee,
-        fee_amount: agreedFee,
-        fee_locked: true
-      }).eq('id', apt.id);
-      if (error) throw error;
+      const { error: rpcErr } = await supabase.rpc('fn_consultation_action', {
+        p_appointment_id: apt.id,
+        p_action: 'Confirmed',
+        p_custom_data: {
+          agreed_fee: agreedFee,
+          fee_amount: agreedFee,
+          fee_locked: true,
+          message: 'Client accepted lawyer fee proposal.'
+        }
+      });
+      if (rpcErr) {
+        const { error } = await supabase.from('appointments').update({
+          status: 'confirmed',
+          agreed_fee: agreedFee,
+          fee_amount: agreedFee,
+          fee_locked: true
+        }).eq('id', apt.id);
+        if (error) throw error;
+      }
       toast.success(`Accepted lawyer fee at BDT ${agreedFee}! Consultation confirmed.`);
+      realtimeSync.broadcastCaseChange({ appointmentId: apt.id, action: 'APPOINTMENT_CONFIRMED' });
       fetchDashboardData();
     } catch (err) {
       toast.error('Failed to accept fee proposal');
@@ -293,9 +315,19 @@ const ClientDashboard = ({ inline = false }) => {
     }
   };
 
-  const handleFileSelect = (e) => {
+  const handleProfilePicChange = (e) => {
     const file = e.target.files[0];
     if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error('Image size exceeds 5MB limit.');
+        return;
+      }
+      const allowed = ['jpg', 'jpeg', 'png', 'webp'];
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      if (!ext || !allowed.includes(ext)) {
+        toast.error('Unsupported image format. Please use JPG, PNG, or WEBP.');
+        return;
+      }
       setProfilePicFile(file);
       setProfilePic(URL.createObjectURL(file));
     }

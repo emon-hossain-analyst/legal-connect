@@ -1,115 +1,117 @@
 import React from 'react';
 
-const TimelineCard = ({ caseData, milestones = [] }) => {
+const TimelineCard = ({ caseData, milestones = [], contractTimeline = [], deliverables = [] }) => {
   if (!caseData) return null;
 
-  // Construct standard milestones + dynamic database events
-  const events = [];
+  const rawEvents = [];
 
-  // 1. Case Accepted / Created
+  // 1. Case Initialized / Created
   if (caseData.created_at || caseData.updated_at) {
-    events.push({
-      title: 'Case Accepted & Initialized',
-      timestamp: new Date(caseData.created_at || caseData.updated_at).toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-      }),
+    rawEvents.push({
+      title: 'Case Record Initialized',
+      rawDate: new Date(caseData.created_at || caseData.updated_at),
       status: 'completed',
       icon: '🎉',
-      desc: 'Client proposal accepted and case record generated in database.',
+      desc: 'Case matter successfully registered in Supabase database.',
     });
   }
 
-  // 2. Contract Signed
+  // 2. Contract Status & Execution
   if (caseData.contract) {
-    const isSigned = caseData.contract.status === 'active' || caseData.contract.status === 'signed';
-    events.push({
-      title: 'Contract Signed by Parties',
-      timestamp: isSigned
-        ? new Date(caseData.contract.updated_at || caseData.contract.created_at).toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric',
-          })
-        : 'Pending Client Signature',
-      status: isSigned ? 'completed' : 'in-progress',
+    const normStatus = String(caseData.contract.status).toUpperCase();
+    const isSignedOrActive = ['ACTIVE', 'SIGNED', 'COMPLETED', 'ARCHIVED', 'UNDER_CLIENT_REVIEW', 'REVISION_REQUESTED'].includes(normStatus);
+    rawEvents.push({
+      title: isSignedOrActive ? `Contract #${caseData.contract.id?.slice(0, 6) || 'CNT'} Active` : 'Contract Created & Pending Review',
+      rawDate: new Date(caseData.contract.updated_at || caseData.contract.created_at || Date.now()),
+      status: isSignedOrActive ? 'completed' : 'in-progress',
       icon: '📜',
-      desc: isSigned
-        ? `Contract #${caseData.contract.id || 'CNT'} executed and binding.`
-        : 'Waiting for client electronic signature.',
-    });
-  } else {
-    events.push({
-      title: 'Contract Preparation',
-      timestamp: 'Not Yet Drafted',
-      status: 'pending',
-      icon: '📜',
-      desc: 'Formal retainer contract to be issued by advocate.',
+      desc: isSignedOrActive
+        ? `Contract executed. Agreed Fee: BDT ${Number(caseData.contract.amount || caseData.contract.agreed_fee || 0).toLocaleString()}`
+        : 'Awaiting client approval of contract terms.',
     });
   }
 
-  // 3. Payment Received
-  const feePaid = caseData.contract?.amount || caseData.agreed_fee;
-  const isPaid = caseData.contract?.status === 'active' || caseData.payment_status === 'paid';
-  events.push({
-    title: 'Initial Retainer / Fee Payment',
-    timestamp: isPaid
-      ? new Date(caseData.updated_at || Date.now()).toLocaleDateString('en-US', {
-          month: 'short',
-          day: 'numeric',
-          year: 'numeric',
-        })
-      : 'Payment Pending',
-    status: isPaid ? 'completed' : caseData.contract ? 'in-progress' : 'pending',
-    icon: '💰',
-    desc: isPaid ? `Fee deposit confirmed (BDT ${Number(feePaid || 0).toLocaleString()}).` : 'Awaiting payment verification.',
-  });
+  // 3. Database Contract Timeline Events (progress updates, revision requests, approvals, etc.)
+  if (Array.isArray(contractTimeline) && contractTimeline.length > 0) {
+    contractTimeline.forEach((ct) => {
+      let icon = '📋';
+      let status = 'completed';
+      if (ct.event_type === 'progress_update') icon = '⚡';
+      if (ct.event_type === 'ready_for_review') { icon = '👀'; status = 'in-progress'; }
+      if (ct.event_type === 'revision_request') { icon = '🔄'; status = 'in-progress'; }
+      if (ct.event_type === 'approval') icon = '✅';
+      if (ct.event_type === 'contract_accepted') icon = '🤝';
 
-  // 4. Documents Uploaded
-  events.push({
-    title: 'Case Documents & Evidence Uploaded',
-    timestamp: 'In Progress',
-    status: 'in-progress',
-    icon: '📂',
-    desc: 'Shared document vault between advocate and client.',
-  });
-
-  // 5. Consultation & Hearings from Milestones
-  if (Array.isArray(milestones) && milestones.length > 0) {
-    milestones.forEach((m, idx) => {
-      const mDone = String(m.status).toLowerCase() === 'completed' || m.completed;
-      events.push({
-        title: m.title || `Milestone #${idx + 1}`,
-        timestamp: m.due_date
-          ? new Date(m.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-          : m.created_at
-          ? new Date(m.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-          : 'Ongoing',
-        status: mDone ? 'completed' : 'in-progress',
-        icon: '⚖️',
-        desc: m.description || `Specific milestone tracking item (Fee: BDT ${m.milestone_fee || 0}).`,
+      rawEvents.push({
+        title: ct.title || 'Workflow Event',
+        rawDate: new Date(ct.created_at || Date.now()),
+        status: status,
+        icon: icon,
+        desc: ct.note || `Update by ${ct.author_role || 'user'}.`,
       });
     });
-  } else {
-    events.push({
-      title: 'Consultations & Court Hearings',
-      timestamp: 'Scheduled as needed',
-      status: 'pending',
-      icon: '🏛️',
-      desc: 'Milestones and hearing dates will appear here once tracked.',
+  }
+
+  // 4. Deliverables Uploaded
+  if (Array.isArray(deliverables) && deliverables.length > 0) {
+    deliverables.forEach((deliv) => {
+      rawEvents.push({
+        title: deliv.is_final ? 'Work Delivery Submitted' : `Document Upload: ${deliv.title}`,
+        rawDate: new Date(deliv.created_at || Date.now()),
+        status: 'completed',
+        icon: '📦',
+        desc: deliv.description || (deliv.file_url ? `File uploaded: ${deliv.title}` : 'Deliverable submitted for audit.'),
+      });
     });
   }
 
-  // 6. Case Completion
+  // 5. Database Milestones
+  if (Array.isArray(milestones) && milestones.length > 0) {
+    milestones.forEach((m, idx) => {
+      const mDone = String(m.status).toLowerCase() === 'completed' || String(m.status).toLowerCase() === 'approved';
+      rawEvents.push({
+        title: m.title || `Milestone #${idx + 1}`,
+        rawDate: new Date(m.completed_at || m.due_date || m.created_at || Date.now()),
+        status: mDone ? 'completed' : 'in-progress',
+        icon: '⚖️',
+        desc: m.description || `Milestone fee: BDT ${Number(m.milestone_fee || 0).toLocaleString()}. Status: ${m.status}`,
+      });
+    });
+  }
+
+  // 6. Case Completion / Closed Status
   const isComplete = String(caseData.status).toLowerCase() === 'completed' || String(caseData.status).toLowerCase() === 'closed';
-  events.push({
-    title: 'Case Completed & Closed',
-    timestamp: isComplete ? new Date(caseData.updated_at).toLocaleDateString() : 'Target Completion',
-    status: isComplete ? 'completed' : 'pending',
-    icon: '🏆',
-    desc: isComplete ? 'All matters resolved and archived.' : 'Final resolution stage.',
-  });
+  if (isComplete) {
+    rawEvents.push({
+      title: 'Case Completed & Closed',
+      rawDate: new Date(caseData.updated_at || Date.now()),
+      status: 'completed',
+      icon: '🏆',
+      desc: 'All work approved, payments released, and matter archived.',
+    });
+  }
+
+  // Sort events chronologically (oldest to newest)
+  rawEvents.sort((a, b) => a.rawDate - b.rawDate);
+
+  const events = rawEvents.map((ev) => ({
+    ...ev,
+    timestamp: ev.rawDate.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }),
+  }));
+
+  if (events.length === 0) {
+    return (
+      <div className="bg-white rounded-2xl border border-border-subtle p-6 shadow-sm text-center">
+        <p className="text-xs text-text-muted">No timeline events recorded yet.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-2xl border border-border-subtle p-6 shadow-sm space-y-6">
@@ -119,7 +121,7 @@ const TimelineCard = ({ caseData, milestones = [] }) => {
             <span>📅</span>
             <span>Case Progression & Audit Timeline</span>
           </h4>
-          <p className="text-xs text-text-muted mt-0.5">Chronological record of milestones and contract actions.</p>
+          <p className="text-xs text-text-muted mt-0.5">Real database chronological record of milestones, updates, and deliverables.</p>
         </div>
       </div>
 

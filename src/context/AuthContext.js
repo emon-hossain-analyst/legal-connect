@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../services/supabase';
 import { realtimeSync } from '../services/realtimeSync.service';
 
@@ -17,6 +17,11 @@ export const AuthContext = createContext({
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const userRef = useRef(null);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
   // Check auth state on initial mount
   useEffect(() => {
@@ -96,6 +101,14 @@ export function AuthProvider({ children }) {
         if (!cancelled) {
           try {
             console.log('Auth state event fired:', event);
+            if (event === 'TOKEN_REFRESHED' && session?.user && userRef.current && (userRef.current.auth_id === session.user.id || userRef.current.id === session.user.id)) {
+              console.log('Skipping profile refetch on TOKEN_REFRESHED for active session:', session.user.email);
+              return;
+            }
+            if (event === 'INITIAL_SESSION' && session?.user && userRef.current && (userRef.current.auth_id === session.user.id || userRef.current.id === session.user.id)) {
+              console.log('Skipping profile refetch on INITIAL_SESSION for active session:', session.user.email);
+              return;
+            }
             if (session?.user) {
               const u = session.user;
               const publicUser = await fetchPublicUser(u.email);

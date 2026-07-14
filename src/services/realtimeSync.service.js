@@ -152,6 +152,110 @@ class RealtimeSyncService {
       }
     });
   }
+
+  // ─── Case & Contract Workflow Real-Time Sync ────────────────────────────────
+
+  /**
+   * Subscribe to real-time case, contract, timeline, deliverable, and notification updates.
+   * @param {(payload: object) => void} cb
+   * @returns {() => void} unsubscribe function
+   */
+  subscribeCaseWorkflow(cb) {
+    if (typeof cb !== 'function') return () => {};
+    if (!this._caseListeners) this._caseListeners = new Set();
+    this._caseListeners.add(cb);
+    this._ensureCaseChannel();
+    return () => this._caseListeners?.delete(cb);
+  }
+
+  /**
+   * Broadcast instant case/contract/deliverable workflow updates across all open tabs/users.
+   */
+  async broadcastCaseChange(data = {}) {
+    const payload = {
+      source: 'broadcast_case',
+      timestamp: Date.now(),
+      caseId: data.caseId ?? null,
+      contractId: data.contractId ?? null,
+      action: data.action ?? 'UPDATE',
+      ...data,
+    };
+
+    this._notifyCases(payload);
+
+    if (this._caseChannel && this._caseSubscribed) {
+      await this._caseChannel
+        .send({ type: 'broadcast', event: 'CASE_WORKFLOW_UPDATE', payload })
+        .catch((err) => console.warn('[RealtimeSync] case broadcast send error:', err));
+    }
+  }
+
+  _ensureCaseChannel() {
+    if (this._caseSubscribed && this._caseChannel) return;
+    if (this._caseChannel) return; // already connecting
+
+    if (!this._caseListeners) this._caseListeners = new Set();
+
+    this._caseChannel = supabase
+      .channel('lc_case_workflow_sync_v1', {
+        config: {
+          broadcast: { self: true },
+        },
+      })
+      .on('broadcast', { event: 'CASE_WORKFLOW_UPDATE' }, ({ payload }) => {
+        this._notifyCases({ source: 'broadcast', ...payload });
+      })
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'cases' },
+        (payload) => this._notifyCases({ source: 'cdc_cases', table: 'cases', payload })
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'contracts' },
+        (payload) => this._notifyCases({ source: 'cdc_contracts', table: 'contracts', payload })
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'contract_timeline' },
+        (payload) => this._notifyCases({ source: 'cdc_timeline', table: 'contract_timeline', payload })
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'deliverables' },
+        (payload) => this._notifyCases({ source: 'cdc_deliverables', table: 'deliverables', payload })
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'case_milestones' },
+        (payload) => this._notifyCases({ source: 'cdc_milestones', table: 'case_milestones', payload })
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          this._caseSubscribed = true;
+        }
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          this._caseSubscribed = false;
+          if (this._caseChannel) {
+            supabase.removeChannel(this._caseChannel);
+            this._caseChannel = null;
+          }
+          clearTimeout(this._caseReconnectTimer);
+          this._caseReconnectTimer = setTimeout(() => this._ensureCaseChannel(), 3000);
+        }
+      });
+  }
+
+  _notifyCases(data) {
+    if (!this._caseListeners) return;
+    this._caseListeners.forEach((cb) => {
+      try {
+        cb(data);
+      } catch (e) {
+        console.error('[RealtimeSync] case listener error:', e);
+      }
+    });
+  }
 }
 
 export const realtimeSync = new RealtimeSyncService();

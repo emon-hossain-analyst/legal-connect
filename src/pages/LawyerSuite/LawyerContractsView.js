@@ -95,13 +95,20 @@ const LawyerContractsView = () => {
         if (error) throw error;
         toast.success('Contract accepted. Work has begun.');
       } else if (action === 'terminate') {
-        const { error } = await supabase
-          .from('contracts')
-          .update({ status: 'Terminated', updated_at: new Date().toISOString() })
-          .eq('id', id);
-        if (error) throw error;
+        const { error: rpcErr } = await supabase.rpc('fn_terminate_contract', {
+          p_contract_id: id,
+          p_reason: 'Lawyer terminated representation contract.'
+        });
+        if (rpcErr) {
+          const { error } = await supabase
+            .from('contracts')
+            .update({ status: 'Terminated', updated_at: new Date().toISOString() })
+            .eq('id', id);
+          if (error) throw error;
+        }
         toast.success('Contract terminated.');
       }
+      realtimeSync.broadcastCaseChange({ contractId: id, action: `CONTRACT_${action.toUpperCase()}` });
       fetchContracts();
     } catch (err) {
       console.error(err);
@@ -134,10 +141,11 @@ const LawyerContractsView = () => {
         fee_locked: false
       };
 
-      const { error } = await supabase.from('contracts').insert([payload]);
+      const { data: insData, error } = await supabase.from('contracts').insert([payload]).select();
       if (error) throw error;
 
       toast.success('Contract created and sent to client for review!');
+      realtimeSync.broadcastCaseChange({ contractId: insData?.[0]?.id || null, action: 'CONTRACT_CREATED' });
       setCreateModalOpen(false);
       setFormData({
         client_id: '',
