@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../../services/supabase';
+import { getSignedDocumentUrl } from '../../services/storage.service';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigate, NavLink, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -736,6 +737,19 @@ const ClientCommunicationPortal = ({ inline = false }) => {
     }
   };
 
+  const handleOpenDocument = async (docUrl) => {
+    if (!docUrl) {
+      toast.error('File document link is processing or unavailable');
+      return;
+    }
+    const signedUrl = await getSignedDocumentUrl(docUrl);
+    if (signedUrl) {
+      window.open(signedUrl, '_blank', 'noopener,noreferrer');
+    } else {
+      toast.error('Unable to open document. Please try again.');
+    }
+  };
+
   const handleTextareaInput = (e) => {
     setNewMessage(e.target.value);
     e.target.style.height = '0px';
@@ -983,7 +997,7 @@ const ClientCommunicationPortal = ({ inline = false }) => {
                             : 'bg-primary text-white p-4 rounded-xl rounded-bl-none shadow-sm'}>
                             {isFile ? (
                               <div 
-                                onClick={() => docUrl ? window.open(docUrl, '_blank') : alert('File document link is processing or unavailable')}
+                                onClick={() => handleOpenDocument(docUrl)}
                                 className={`flex items-center gap-3 p-2.5 rounded-lg cursor-pointer border transition-all text-left ${isSent ? 'bg-secondary/10 border-secondary/20 hover:bg-secondary/20' : 'bg-white/10 border-white/20 hover:bg-white/20'}`}
                               >
                                 <div className="w-10 h-10 rounded bg-white/10 flex items-center justify-center shrink-0">
@@ -1071,7 +1085,7 @@ const ClientCommunicationPortal = ({ inline = false }) => {
                         const docUrl = doc.file_url || doc.storage_url;
                         const docTitle = doc.title || doc.file_name || 'Document';
                         return (
-                          <li key={doc.id} onClick={() => docUrl && window.open(docUrl, '_blank')} className="flex items-center gap-2 p-2 hover:bg-surface-container-high rounded transition-colors cursor-pointer group">
+                          <li key={doc.id} onClick={() => handleOpenDocument(docUrl)} className="flex items-center gap-2 p-2 hover:bg-surface-container-high rounded transition-colors cursor-pointer group">
                             <span className="material-symbols-outlined text-error text-lg" style={{ fontVariationSettings: "'FILL' 1" }}>description</span>
                             <span className="text-xs text-primary truncate group-hover:text-secondary">{docTitle}</span>
                           </li>

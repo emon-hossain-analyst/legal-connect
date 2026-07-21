@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../services/supabase';
+import { getSignedDocumentUrl } from '../../services/storage.service';
 import toast from 'react-hot-toast';
 
 const LawyersManagement = () => {
@@ -785,15 +786,18 @@ const LawyersManagement = () => {
                       </div>
                       <div className="flex items-center justify-between pt-2 border-t border-border-subtle/60 text-xs">
                         <span className="text-gray-400">{doc.created_at ? new Date(doc.created_at).toLocaleDateString() : 'Uploaded'}</span>
-                        <a
-                          href={doc.file_url}
-                          target="_blank"
-                          rel="noreferrer"
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const url = await getSignedDocumentUrl(doc.file_url || doc.storage_url);
+                            if (url) window.open(url, '_blank', 'noopener,noreferrer');
+                            else toast.error('Unable to open document. Please try again.');
+                          }}
                           className="px-3 py-1 bg-navy-primary text-white font-bold rounded-lg hover:bg-navy-primary/90 transition flex items-center gap-1"
                         >
                           <span>Open PDF</span>
                           <span className="material-symbols-outlined text-sm">open_in_new</span>
-                        </a>
+                        </button>
                       </div>
                     </div>
                   ))}

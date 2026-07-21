@@ -59,7 +59,7 @@ const Register = () => {
     const e = {};
     if (!formData.name.trim()) e.name = 'Name is required';
     if (!formData.email) e.email = 'Email is required';
-    else if (!/\S+@\S+\.\S+/.test(formData.email)) e.email = 'Email is invalid';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(formData.email)) e.email = 'Email is invalid';
 
     if (!formData.password) {
       e.password = 'Password is required';
@@ -276,24 +276,6 @@ const Register = () => {
                 ) : 'Create Account'}
               </button>
             </form>
-
-            {/* Divider */}
-            <div className="relative my-md">
-              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-outline-variant"></div></div>
-              <div className="relative flex justify-center text-label-sm"><span className="bg-surface-container-lowest px-sm text-on-surface-variant">OR CONTINUE WITH</span></div>
-            </div>
-
-            {/* Social Login */}
-            <div className="grid grid-cols-2 gap-sm">
-              <button type="button" className="flex items-center justify-center gap-xs h-[40px] border border-outline-variant rounded-lg hover:bg-surface-container-low transition-colors">
-                <img alt="Google" className="w-4 h-4" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB60NJE31JER13BiwgRXf2aYNpgdA0HwXpTvt-DZ0Xj3SBsqV6-iFHcHVbr7HEoo7f-lN3gyR9l1aWc2fbsp__Yf3o2zK1x0N1bjPCb3nH6d8UjYOlgIunXuHqFdvh1RurxhDn0uEu9sitQsvqfoh5fM2nLq8oVN1GtHsPRN-8z1GVLsBvIS6STviJAskrcvPaiOyQ3OzWMehgSkqEOx0xolXP6DPNOTrm3uBwj-FpHew4igbGaYb81Q9cP30sDXpUj3njB_gx1VwvY"/>
-                <span className="font-label-sm text-label-sm">Google</span>
-              </button>
-              <button type="button" className="flex items-center justify-center gap-xs h-[40px] border border-outline-variant rounded-lg hover:bg-surface-container-low transition-colors">
-                <img alt="Apple" className="w-4 h-4" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAyrxHF4qovQpWyW0gSBkFTIeFLjgDxTnpnNDK0QVSRNoJF2simxkKtlnnKaqRzeVjE8hRj5DhOlNBxJp9McLZ6pO_vo4tFIpb_cBpZ7TteKD1aic4E5_0TJgOgW-zbNFIVwZkWykHPIh9IggmlrlJQxEg2zXxOty_yxrPy2LHFN4YTBkWT7_vYt8GxVykJjnwqt5WqjDddxxc2e65kT6B5oSq_6QmwwySNpI2TICo_lZeB-wLKbZT_l28qtNjz5DQ-AxMlT7U6cooe"/>
-                <span className="font-label-sm text-label-sm">Apple</span>
-              </button>
-            </div>
 
             <p className="text-center font-body-sm text-body-sm text-on-surface-variant mt-lg">
               Already have an account? <Link className="text-primary font-bold hover:underline" to="/login">Log in</Link>

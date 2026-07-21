@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../services/supabase';
 import { realtimeSync } from '../../services/realtimeSync.service';
+import { getSignedDocumentUrl } from '../../services/storage.service';
 import toast from 'react-hot-toast';
 
 const LawyerVerifications = () => {
@@ -16,6 +17,7 @@ const LawyerVerifications = () => {
   // Document Preview Modal State
   const [previewDoc, setPreviewDoc] = useState(null);
   const [hoveredDoc, setHoveredDoc] = useState(null);
+  const [resolvedPreviewUrl, setResolvedPreviewUrl] = useState(null);
 
   // Full Details Drawer State
   const [expandedLawyerId, setExpandedLawyerId] = useState(null);
@@ -27,6 +29,21 @@ const LawyerVerifications = () => {
     });
     return () => unsubscribe();
   }, []);
+
+  // Resolve the stored document reference into a short-lived signed URL
+  // whenever the previewed document changes (buckets are now private).
+  useEffect(() => {
+    let cancelled = false;
+    setResolvedPreviewUrl(null);
+    if (previewDoc?.storage_url) {
+      getSignedDocumentUrl(previewDoc.storage_url).then((url) => {
+        if (!cancelled) setResolvedPreviewUrl(url);
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [previewDoc]);
 
   const fetchVerifications = async () => {
     try {
@@ -582,14 +599,14 @@ const LawyerVerifications = () => {
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <a
-                  href={previewDoc.storage_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-semibold text-white transition-colors flex items-center gap-1"
+                <button
+                  type="button"
+                  onClick={() => resolvedPreviewUrl && window.open(resolvedPreviewUrl, '_blank', 'noopener,noreferrer')}
+                  disabled={!resolvedPreviewUrl}
+                  className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-semibold text-white transition-colors flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <span>↗</span> Open New Tab
-                </a>
+                </button>
                 <button
                   onClick={() => setPreviewDoc(null)}
                   className="w-8 h-8 rounded-full bg-white/10 hover:bg-danger-red text-white flex items-center justify-center font-bold text-sm transition-colors"
@@ -602,11 +619,18 @@ const LawyerVerifications = () => {
             {/* Document Frame / Viewer */}
             <div className="flex-1 bg-gray-100 flex items-center justify-center overflow-auto p-4 relative">
               {previewDoc.storage_url ? (
-                <iframe
-                  src={previewDoc.storage_url}
-                  title={previewDoc.file_name}
-                  className="w-full h-full rounded-lg shadow-md border bg-white"
-                />
+                resolvedPreviewUrl ? (
+                  <iframe
+                    src={resolvedPreviewUrl}
+                    title={previewDoc.file_name}
+                    className="w-full h-full rounded-lg shadow-md border bg-white"
+                  />
+                ) : (
+                  <div className="text-center text-text-muted">
+                    <div className="text-4xl mb-2 animate-pulse">⏳</div>
+                    <p className="font-semibold">Resolving secure document link...</p>
+                  </div>
+                )
               ) : (
                 <div className="text-center text-text-muted">
                   <div className="text-4xl mb-2">⚠️</div>

@@ -37,10 +37,17 @@ const generateReferenceNumber = () => {
 
 /**
  * Simulate a payment (no real gateway).
- * 
- * The commission math happens in the PostgreSQL trigger (handle_payment_insert_completed),
- * NOT here. This function just inserts the payment record with status 'completed'.
- * 
+ *
+ * Audit #27: this used to insert directly with status: 'completed', which
+ * meant any authenticated client could fabricate a "completed" payment (and
+ * fire the commission trigger) with a single crafted table insert. It now
+ * inserts as 'pending' (RLS only allows self-inserts with that status) and
+ * transitions to 'completed' through the confirm_simulated_payment RPC,
+ * which re-validates ownership and idempotency server-side before the
+ * commission trigger runs. Still not a real gateway — a genuine
+ * SSLCommerz/Stripe integration should replace both steps with a verified
+ * webhook before real money is involved.
+ *
  * @param {Object} params
  * @param {string} params.client_id - UUID of the paying client
  * @param {string} params.lawyer_id - UUID of the receiving lawyer
@@ -48,7 +55,7 @@ const generateReferenceNumber = () => {
  * @param {string} [params.appointment_id] - UUID of the appointment (optional)
  * @param {string} [params.case_id] - UUID of the case (optional)
  * @param {string} [params.payment_method] - e.g. 'simulated', 'bkash', 'card'
- * 
+ *
  * @returns {Object} { success, payment, error }
  */
 export const simulatePayment = async ({
@@ -66,8 +73,7 @@ export const simulatePayment = async ({
 
     const reference_number = generateReferenceNumber();
 
-    // Insert payment as completed — the DB trigger handles commission calculation
-    const { data, error } = await supabase
+    const { data: pendingPayment, error: insertError } = await supabase
       .from('payments')
       .insert([{
         client_id,
@@ -76,18 +82,27 @@ export const simulatePayment = async ({
         case_id,
         amount: parseFloat(amount),
         payment_method,
-        status: 'completed',
+        status: 'pending',
         reference_number,
       }])
       .select()
       .single();
 
-    if (error) {
-      console.error('Payment insert error:', error);
-      return { success: false, payment: null, error: error.message };
+    if (insertError) {
+      console.error('Payment insert error:', insertError);
+      return { success: false, payment: null, error: insertError.message };
     }
 
-    return { success: true, payment: data, error: null };
+    const { data: confirmedPayment, error: confirmError } = await supabase
+      .rpc('confirm_simulated_payment', { p_payment_id: pendingPayment.id })
+      .single();
+
+    if (confirmError) {
+      console.error('Payment confirmation error:', confirmError);
+      return { success: false, payment: pendingPayment, error: confirmError.message };
+    }
+
+    return { success: true, payment: confirmedPayment, error: null };
   } catch (err) {
     console.error('Payment service error:', err);
     return { success: false, payment: null, error: err.message };

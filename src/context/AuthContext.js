@@ -27,7 +27,7 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     let cancelled = false;
 
-    const fetchPublicUser = async (email) => {
+    const fetchPublicUser = async (userId) => {
       const withTimeout = (promise, ms) => {
         return Promise.race([
           promise,
@@ -36,8 +36,11 @@ export function AuthProvider({ children }) {
       };
 
       try {
+        // users.id IS auth.users.id (direct FK) — look up by id, not email, since
+        // email can drift out of sync between auth.users and public.users
+        // (audit #28: identity resolution was inconsistent across the codebase).
         const { data, error } = await withTimeout(
-          supabase.from('users').select('id, auth_id, user_type, name, profile_picture_url, is_verified').eq('email', email).maybeSingle(),
+          supabase.from('users').select('id, auth_id, user_type, name, profile_picture_url, is_verified').eq('id', userId).maybeSingle(),
           5000
         );
         if (error) {
@@ -54,14 +57,16 @@ export function AuthProvider({ children }) {
       }
     };
 
-    const checkAuth = async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    const checkAuth = async (attempt = 0) => {
       try {
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
         if (sessionError) throw sessionError;
 
         if (!cancelled && session?.user) {
           const u = session.user;
-          const publicUser = await fetchPublicUser(u.email);
+          const publicUser = await fetchPublicUser(u.id);
           if (!cancelled) {
             if (publicUser && !publicUser._missing) {
               console.log('Session restored successfully for:', u.email);
@@ -88,7 +93,15 @@ export function AuthProvider({ children }) {
         }
       } catch (err) {
         console.error('Auth check initialization error:', err);
-        if (!cancelled) setUser(null);
+        if (cancelled) return;
+        // Transient network errors during page load shouldn't permanently log
+        // the user out — retry twice with backoff before giving up (audit #37).
+        if (attempt < 2) {
+          await sleep(500 * (attempt + 1));
+          if (!cancelled) await checkAuth(attempt + 1);
+          return;
+        }
+        setUser(null);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -111,7 +124,7 @@ export function AuthProvider({ children }) {
             }
             if (session?.user) {
               const u = session.user;
-              const publicUser = await fetchPublicUser(u.email);
+              const publicUser = await fetchPublicUser(u.id);
               if (!cancelled) {
                 if (publicUser && !publicUser._missing) {
                   setUser({ 

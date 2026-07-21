@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase';
 import { realtimeSync } from '../../services/realtimeSync.service';
+import { getSignedDocumentUrl } from '../../services/storage.service';
 import { SkeletonDashboard } from '../../components/Skeleton/Skeleton';
 
 const ClientDashboard = ({ inline = false }) => {
@@ -52,18 +53,34 @@ const ClientDashboard = ({ inline = false }) => {
   }, [user?.id]);
 
   // Fix 5: Real-time subscription for live dashboard updates
+  // Audit #16: previously subscribed with no per-user filter, so ANY user's
+  // appointment/case/message change triggered a full 8+ query refetch for
+  // EVERY mounted client dashboard. Now scoped to this client's own rows
+  // (consultation_updates has no client_id column to filter on directly —
+  // it's joined through appointments — so it stays unfiltered but debounced
+  // like everything else) and debounced so a burst of events collapses into
+  // a single refetch instead of one per event.
   useEffect(() => {
     if (!user?.id) return;
+    let debounceTimer = null;
+    const debouncedFetch = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => { fetchDashboardData(); }, 500);
+    };
+
     const channel = supabase.channel(`client_dashboard_realtime_${user.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, () => fetchDashboardData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'cases' }, () => fetchDashboardData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => fetchDashboardData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments', filter: `client_id=eq.${user.id}` }, debouncedFetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cases', filter: `client_id=eq.${user.id}` }, debouncedFetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `receiver_id=eq.${user.id}` }, debouncedFetch)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'consultation_updates' }, (payload) => {
         toast(payload.new.message || `Consultation status updated to ${payload.new.update_type}`, { icon: '📅' });
-        fetchDashboardData();
+        debouncedFetch();
       })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
@@ -285,6 +302,15 @@ const ClientDashboard = ({ inline = false }) => {
       fetchDashboardData();
     } catch (err) {
       toast.error('Failed to accept fee proposal');
+    }
+  };
+
+  const handleOpenDocument = async (doc) => {
+    const url = await getSignedDocumentUrl(doc.storage_url || doc.file_url);
+    if (url) {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } else {
+      toast.error('Unable to open document. Please try again.');
     }
   };
 
@@ -839,7 +865,7 @@ const ClientDashboard = ({ inline = false }) => {
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm text-center">
             <div className="relative inline-block mb-6 group">
               <img alt="Profile Avatar" className="w-48 h-48 rounded-full object-cover border-4 border-gray-100 shadow-inner" src={userProfilePic} />
-              <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileSelect} />
+              <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleProfilePicChange} />
               <button onClick={() => fileInputRef.current?.click()} className="absolute bottom-2 right-2 bg-[#1B2B4B] text-white p-3 rounded-full shadow-lg hover:bg-[#C9A84C] transition-colors">
                 <span className="material-symbols-outlined">photo_camera</span>
               </button>
@@ -1157,7 +1183,7 @@ const ClientDashboard = ({ inline = false }) => {
                    <p className="text-sm text-gray-500 italic">No documents explicitly linked to this case yet. Upload general documents from the Documents tab.</p>
                 ) : (
                   documents.filter(doc => doc.case_id === selectedCase.id).map(doc => (
-                    <div key={doc.id} onClick={() => window.open(doc.storage_url, '_blank')} className="flex items-center justify-between p-3 rounded-lg border border-gray-200 bg-[#f8f9ff] hover:bg-[#eef4ff] transition-colors cursor-pointer group">
+                    <div key={doc.id} onClick={() => handleOpenDocument(doc)} className="flex items-center justify-between p-3 rounded-lg border border-gray-200 bg-[#f8f9ff] hover:bg-[#eef4ff] transition-colors cursor-pointer group">
                       <div className="flex items-center gap-3">
                         <span className="material-symbols-outlined text-blue-600 bg-blue-50 p-2 rounded">article</span>
                         <div>

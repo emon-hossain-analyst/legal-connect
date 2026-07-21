@@ -21,36 +21,12 @@
     
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
     <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" /></noscript>
-    <script>
-      // Make ethereum property configurable to prevent redefinition errors
-      if (typeof window.ethereum !== 'undefined') {
-        try {
-          Object.defineProperty(window, 'ethereum', {
-            configurable: true,
-            writable: true,
-            value: window.ethereum
-          });
-        } catch (e) {
-          console.warn('Could not make ethereum configurable:', e);
-        }
-      }
-    </script>
+    <script src="%PUBLIC_URL%/ethereum-shim.js"></script>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="error-box" style="display:none; padding: 20px; background: #ffcccc; color: #cc0000; font-family: monospace; position: absolute; top: 0; left: 0; right: 0; z-index: 999999;"></div>
-    <script>
-      window.onerror = function(message, source, lineno, colno, error) {
-        var box = document.getElementById('error-box');
-        box.style.display = 'block';
-        box.innerHTML += '<b>Error:</b> ' + message + '<br><b>Source:</b> ' + source + ' (' + lineno + ':' + colno + ')<br><hr>';
-      };
-      window.addEventListener("unhandledrejection", function(event) {
-        var box = document.getElementById('error-box');
-        box.style.display = 'block';
-        box.innerHTML += '<b>Unhandled Promise Rejection:</b> ' + (event.reason && event.reason.stack ? event.reason.stack : event.reason) + '<br><hr>';
-      });
-    </script>
+    <script src="%PUBLIC_URL%/error-handler.js"></script>
     <div id="root"></div>
   </body>
 </html>

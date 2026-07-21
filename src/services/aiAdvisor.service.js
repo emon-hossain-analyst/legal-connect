@@ -170,131 +170,31 @@ export const queryMatchingLawyers = async ({
   excludeIds = []
 }) => {
   try {
-    // 1. Fetch verified lawyers along with user profile info
-    const { data: lawyersData, error: lawyersErr } = await supabase
-      .from('lawyers')
-      .select('*, user:users(name, profile_picture_url, phone, email)')
-      .eq('is_verified', true);
-
-    if (lawyersErr) throw lawyersErr;
-
-    // 2. Fetch practice areas and relational expertise for thorough matching
-    const [areasRes, expRes, junctionRes] = await Promise.all([
-      supabase.from('practice_areas').select('*'),
-      supabase.from('legal_expertise').select('*'),
-      supabase.from('lawyer_expertise_junction').select('*')
-    ]);
-
-    const practiceAreas = areasRes.data || [];
-    const legalExpertise = expRes.data || [];
-    const junctionData = junctionRes.data || [];
-
-    // Map relational expertise to each lawyer
-    let allLawyers = (lawyersData || []).map(lwr => {
-      const lwrId = lwr.id || lwr.user_id;
-      const expertiseIds = junctionData
-        .filter(j => j.lawyer_id === lwrId || j.lawyer_id === lwr.user_id)
-        .map(j => j.expertise_id);
-      
-      const expertiseNames = expertiseIds.map(id => {
-        const expObj = legalExpertise.find(e => e.id === id);
-        return expObj ? expObj.name : '';
-      }).filter(Boolean);
-
-      const areaNames = expertiseIds.map(id => {
-        const expObj = legalExpertise.find(e => e.id === id);
-        const areaObj = practiceAreas.find(pa => pa.id === expObj?.practice_area_id);
-        return areaObj ? areaObj.name : '';
-      }).filter(Boolean);
-
-      return {
-        ...lwr,
-        expertiseNames,
-        areaNames,
-        full_name: lwr.user?.name || lwr.full_name || 'Verified Lawyer',
-        avatar_url: lwr.user?.profile_picture_url || lwr.avatar_url,
-        phone: lwr.user?.phone || lwr.phone,
-        email: lwr.user?.email || lwr.email
-      };
+    // Filtering, fallback, sorting, and pagination now happen in the database
+    // via the match_lawyers_for_ai RPC (see sql/66_p1_high_priority_hardening.sql)
+    // instead of fetching every verified lawyer + all expertise data into the browser.
+    const { data, error } = await supabase.rpc('match_lawyers_for_ai', {
+      p_category: category,
+      p_location: location,
+      p_need_type: needType,
+      p_limit: limit,
+      p_offset: offset,
+      p_exclude_ids: excludeIds
     });
 
-    // Filter out excluded IDs (for pagination / "show more")
-    if (excludeIds && excludeIds.length > 0) {
-      allLawyers = allLawyers.filter(l => !excludeIds.includes(l.id) && !excludeIds.includes(l.user_id));
-    }
+    if (error) throw error;
 
-    let matchedLawyers = [...allLawyers];
-    let isFallback = false;
-
-    // 3. Filter by Category if provided
-    if (category) {
-      const catLower = category.toLowerCase();
-      // Extract key concept from category (e.g. "Criminal Law" -> "criminal", "Family Law" -> "family")
-      const rootConcept = catLower.replace(' law', '').replace(' and ', ' ').trim();
-
-      const categoryFiltered = matchedLawyers.filter(l => {
-        const specMatch = l.specialization?.toLowerCase().includes(rootConcept) || l.specialization?.toLowerCase().includes(catLower);
-        const bioMatch = l.bio?.toLowerCase().includes(rootConcept);
-        const expMatch = l.expertiseNames?.some(name => name.toLowerCase().includes(rootConcept));
-        const areaMatch = l.areaNames?.some(name => name.toLowerCase().includes(rootConcept));
-        return specMatch || bioMatch || expMatch || areaMatch;
-      });
-
-      if (categoryFiltered.length > 0) {
-        matchedLawyers = categoryFiltered;
-      } else {
-        // No lawyers found for this category -> fallback to general top rated
-        isFallback = true;
-      }
-    }
-
-    // 4. Filter by Location if detected and not already empty
-    if (location && !isFallback) {
-      const locLower = location.toLowerCase();
-      const locationFiltered = matchedLawyers.filter(l => 
-        l.location?.toLowerCase().includes(locLower) || l.city?.toLowerCase().includes(locLower)
-      );
-      // Only apply location filter if it doesn't empty the results
-      if (locationFiltered.length > 0) {
-        matchedLawyers = locationFiltered;
-      }
-    }
-
-    // 5. Apply Need Type sorting & filtering
-    if (needType === 'urgent') {
-      // Prioritize lawyers available for immediate consultation and high rating
-      matchedLawyers.sort((a, b) => {
-        if (a.available_for_consultation !== b.available_for_consultation) {
-          return a.available_for_consultation ? -1 : 1;
-        }
-        return (b.avg_rating || 0) - (a.avg_rating || 0);
-      });
-    } else if (needType === 'case') {
-      // Prioritize experience years >= 3 and high rating
-      matchedLawyers.sort((a, b) => {
-        const expA = (a.experience_years || 0) >= 3 ? 1 : 0;
-        const expB = (b.experience_years || 0) >= 3 ? 1 : 0;
-        if (expA !== expB) return expB - expA;
-        return (b.avg_rating || 0) - (a.avg_rating || 0);
-      });
-    } else {
-      // Default: sort by top rated then completed cases
-      matchedLawyers.sort((a, b) => {
-        if ((b.avg_rating || 0) !== (a.avg_rating || 0)) {
-          return (b.avg_rating || 0) - (a.avg_rating || 0);
-        }
-        return (b.completed_cases || 0) - (a.completed_cases || 0);
-      });
-    }
-
-    const totalMatches = matchedLawyers.length;
-    const paginatedLawyers = matchedLawyers.slice(offset, offset + limit);
+    const lawyers = (data?.lawyers || []).map(l => ({
+      ...l,
+      expertiseNames: l.expertise_names || [],
+      areaNames: l.area_names || []
+    }));
 
     return {
-      lawyers: paginatedLawyers,
-      totalMatches,
-      isFallback,
-      category: category || 'General Practice'
+      lawyers,
+      totalMatches: data?.totalMatches || 0,
+      isFallback: data?.isFallback || false,
+      category: data?.category || category || 'General Practice'
     };
   } catch (err) {
     console.error('[AI Advisor Service] Error querying lawyers:', err);
@@ -366,66 +266,25 @@ export const fileToBase64 = (file) => {
 };
 
 /**
- * Sends uploaded case file to Gemini for structured legal analysis.
- * @param {object} params - { file, base64Data, genAI, userPrompt }
+ * Sends uploaded case file to the `gemini-proxy` Edge Function for structured
+ * legal analysis. The Gemini API key never reaches the browser (audit #3) —
+ * the function holds it as a server-side secret.
+ * @param {object} params - { file, base64Data, userPrompt }
  * @returns {Promise<object>} Structured analysis JSON object
  */
-export const analyzeDocumentWithGemini = async ({ file, base64Data, genAI, userPrompt = '' }) => {
-  if (!genAI || !base64Data) {
-    throw new Error('Missing Gemini SDK instance or file data.');
+export const analyzeDocumentWithGemini = async ({ file, base64Data, userPrompt = '' }) => {
+  if (!base64Data) {
+    throw new Error('Missing file data.');
   }
 
-  const mimeType = file.type || 'application/pdf';
-  const inlinePart = {
-    inlineData: {
-      data: base64Data,
-      mimeType: mimeType
-    }
-  };
+  const mimeType = file?.type || 'application/pdf';
 
-  const systemPrompt = `You are an expert AI Legal Assistant in Bangladesh. You have been given a legal document or case file uploaded by a user.
-${userPrompt ? `The user also stated: "${userPrompt}"\n` : ''}
-Analyze the document/image carefully and return a JSON object with EXACTLY the following structure (do NOT include markdown code fences or any other text outside the JSON):
-{
-  "documentType": "Short title of document (e.g. Land Sale Deed, Divorce Notice, Employment Agreement, FIR, Court Summons, etc.)",
-  "keyFacts": [
-    "Fact 1: Brief objective summary of key detail",
-    "Fact 2: Brief objective summary of key detail",
-    "Fact 3: Brief objective summary of key detail"
-  ],
-  "practiceArea": "One of: Criminal Law, Family Law, Property Law, Corporate Law, Civil Law, Labor Law, Constitutional Law, Immigration Law, Intellectual Property, Tax Law",
-  "urgentIssues": "Specify any critical deadlines, court dates, notice periods, or immediate risks (or write 'None identified' if none)",
-  "recommendedAction": "1-2 sentences explaining what immediate legal step or lawyer consultation is recommended."
-}`;
+  const { data, error } = await supabase.functions.invoke('gemini-proxy', {
+    body: { mode: 'analyzeDocument', base64Data, mimeType, userPrompt }
+  });
 
-  const modelsToTry = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-2.0-flash-001"];
-  let responseText = null;
-
-  for (const modelName of modelsToTry) {
-    try {
-      const model = genAI.getGenerativeModel({ 
-        model: modelName,
-        generationConfig: { responseMimeType: "application/json" }
-      });
-      const result = await model.generateContent([systemPrompt, inlinePart]);
-      responseText = result.response.text();
-      if (responseText) break;
-    } catch (err) {
-      console.warn(`[AI Advisor] Model ${modelName} failed for doc analysis, trying next...`, err.message);
-    }
-  }
-
-  if (!responseText) {
-    throw new Error("Failed to analyze document with Gemini models.");
-  }
-
-  try {
-    // Clean text in case model wrapped it in ```json ... ```
-    const cleanedJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-    const parsedData = JSON.parse(cleanedJson);
-    return parsedData;
-  } catch (parseErr) {
-    console.error('[AI Advisor] Failed to parse Gemini doc analysis JSON:', responseText);
+  if (error || !data || data.error) {
+    console.error('[AI Advisor] gemini-proxy analyzeDocument failed:', error || data?.error);
     return {
       documentType: "Uploaded Legal Document",
       keyFacts: ["Document content recognized.", "Detailed extraction requires manual attorney review."],
@@ -433,5 +292,31 @@ Analyze the document/image carefully and return a JSON object with EXACTLY the f
       urgentIssues: "Please consult a lawyer to verify statutory limitation periods.",
       recommendedAction: "We recommend booking a consultation with a verified lawyer below to review this file in detail."
     };
+  }
+
+  return data.analysis;
+};
+
+/**
+ * Sends a chat message (with prior history) to the `gemini-proxy` Edge
+ * Function for a conversational response. Returns null if the AI is
+ * unavailable so the caller can fall back to the local rule-engine.
+ * @param {Array<{role: string, parts: {text: string}[]}>} history
+ * @param {string} message
+ * @returns {Promise<string|null>}
+ */
+export const sendAIChatMessage = async (history, message) => {
+  try {
+    const { data, error } = await supabase.functions.invoke('gemini-proxy', {
+      body: { mode: 'chat', history, message }
+    });
+    if (error || !data || data.error) {
+      console.warn('[AI Advisor] gemini-proxy chat failed:', error || data?.error);
+      return null;
+    }
+    return data.text || null;
+  } catch (err) {
+    console.warn('[AI Advisor] gemini-proxy chat request failed:', err.message);
+    return null;
   }
 };

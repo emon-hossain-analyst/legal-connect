@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { supabase } from '../../services/supabase';
+import { signIn } from '../../services/auth.service';
 import { useAuth } from '../../context/AuthContext';
 import Button from '../../components/Button/Button';
 import Card from '../../components/Card/Card';
@@ -30,7 +30,7 @@ const Login = () => {
   const validate = () => {
     const e = {};
     if (!formData.email) e.email = 'Email is required';
-    else if (!/\S+@\S+\.\S+/.test(formData.email)) e.email = 'Email is invalid';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(formData.email)) e.email = 'Email is invalid';
     if (!formData.password) e.password = 'Password is required';
     else if (formData.password.length < 8) e.password = 'Password must be at least 8 characters';
     setErrors(e);
@@ -51,80 +51,20 @@ const Login = () => {
     setErrors((prev) => ({ ...prev, submit: null }));
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: formData.email.trim().toLowerCase(),
+      // Audit #8: this used to duplicate auth.service.js's signIn() logic
+      // inline, creating two divergent login/hydration code paths. Both now
+      // share the same service function.
+      const { data } = await signIn({
+        email: formData.email,
         password: formData.password
       });
 
-      if (error) {
-        setErrors((prev) => ({ ...prev, submit: error.message }));
-        setLoading(false);
-        return;
-      }
-
-      if (data.session && data.user) {
-        const u = data.user;
-        
-        // Timeout utility to prevent database locks from hanging the login forever
-        const withTimeout = (promise, ms) => {
-          return Promise.race([
-            promise,
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Database query timeout')), ms))
-          ]);
-        };
-
-        // Fetch user profile from database to ensure complete role and profile hydration
-        let publicUser = null;
-        try {
-          const res = await withTimeout(
-            supabase.from('users').select('*').eq('auth_id', u.id).maybeSingle(),
-            5000
-          );
-          publicUser = res.data;
-          
-          if (!publicUser) {
-            const resByEmail = await withTimeout(
-              supabase.from('users').select('*').eq('email', u.email).maybeSingle(),
-              5000
-            );
-            publicUser = resByEmail.data;
-          }
-        } catch (err) {
-          console.warn('Profile lookup timed out or failed, proceeding with graceful fallback:', err);
-        }
-
-        const userRole = publicUser?.user_type || publicUser?.role || u.user_metadata?.role || u.user_metadata?.user_type || 'client';
-        const userName = publicUser?.name || publicUser?.full_name || u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0];
-        const avatarUrl = publicUser?.profile_picture_url || u.user_metadata?.avatar_url || u.user_metadata?.profile_picture_url;
-
-        const hydratedUser = {
-          ...u,
-          ...u.user_metadata,
-          ...publicUser,
-          id: publicUser?.id || u.id,
-          auth_id: u.id,
-          user_type: userRole,
-          role: userRole,
-          full_name: userName,
-          name: userName,
-          profile_picture_url: avatarUrl
-        };
-
-        // Synchronize global auth state instantly
-        setUser(hydratedUser);
-
-        // Execute accurate router push based on role
-        let targetDashboard = '/client/dashboard';
-        if (userRole === 'lawyer') {
-          targetDashboard = '/lawyer-suite/dashboard';
-        } else if (userRole === 'admin') {
-          targetDashboard = '/admin';
-        }
-
-        // Slight delay to ensure context propagates before router unmounts
-        setTimeout(() => {
-          navigate(redirect || targetDashboard, { replace: true });
-        }, 50);
+      if (data?.user) {
+        // Audit #44: previously used setTimeout(..., 50) to "let context
+        // propagate" before navigating — a race condition by design. Just
+        // update the user state; the effect above already reacts to `user`
+        // becoming truthy and navigates once it has.
+        setUser(data.user);
       } else {
         // No session returned (e.g., email not confirmed)
         setLoading(false);

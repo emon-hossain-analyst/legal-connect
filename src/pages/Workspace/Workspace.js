@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { supabase } from '../../services/supabase';
+import { getSignedDocumentUrl } from '../../services/storage.service';
 import { useAuth } from '../../context/AuthContext';
 import useChatSocket from '../../hooks/useChatSocket';
 import { SkeletonDashboard } from '../../components/Skeleton/Skeleton';
@@ -161,8 +162,13 @@ const Workspace = () => {
   const handleViewDocument = async (docId) => {
     try {
       const doc = documents.find(d => d.id === docId);
-      if (doc && doc.file_url) {
-        window.open(doc.file_url, '_blank');
+      if (doc && (doc.file_url || doc.storage_url)) {
+        const url = await getSignedDocumentUrl(doc.file_url || doc.storage_url);
+        if (url) {
+          window.open(url, '_blank', 'noopener,noreferrer');
+        } else {
+          toast.error('Unable to open document. Please try again.');
+        }
       } else {
         toast.error('Download URL not available');
       }

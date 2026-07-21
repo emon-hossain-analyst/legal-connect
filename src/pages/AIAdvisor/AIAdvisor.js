@@ -1,5 +1,4 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import toast from 'react-hot-toast';
 import {
   detectLegalCategory,
@@ -7,7 +6,8 @@ import {
   queryMatchingLawyers,
   uploadCaseFile,
   fileToBase64,
-  analyzeDocumentWithGemini
+  analyzeDocumentWithGemini,
+  sendAIChatMessage
 } from '../../services/aiAdvisor.service';
 import LawyerSuggestionCards from '../../components/AIAdvisor/LawyerSuggestionCards';
 import CategoryQuickStartChips from '../../components/AIAdvisor/CategoryQuickStartChips';
@@ -63,6 +63,16 @@ const AIAdvisor = () => {
     }
   };
 
+  // Mirrors the 'documents' storage bucket's allowed_mime_types (audit #43) —
+  // validate client-side so users get an immediate, specific error instead
+  // of waiting for the upload to fail server-side.
+  const ALLOWED_FILE_TYPES = [
+    'application/pdf', 'image/png', 'image/jpeg', 'image/webp',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'text/plain'
+  ];
+
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -70,6 +80,13 @@ const AIAdvisor = () => {
     // Limit file size to 10MB
     if (file.size > 10 * 1024 * 1024) {
       toast.error('File size exceeds 10MB limit.');
+      e.target.value = '';
+      return;
+    }
+
+    if (file.type && !ALLOWED_FILE_TYPES.includes(file.type)) {
+      toast.error('Unsupported file type. Please upload a PDF, Word document, plain text file, or image (PNG/JPEG/WebP).');
+      e.target.value = '';
       return;
     }
 
@@ -167,12 +184,6 @@ const AIAdvisor = () => {
       textareaRef.current.style.height = 'auto';
     }
 
-    const apiKey = process.env.REACT_APP_GOOGLE_API_KEY;
-    let genAI = null;
-    if (apiKey) {
-      genAI = new GoogleGenerativeAI(apiKey);
-    }
-
     // =========================================================================
     // BRANCH A: FILE UPLOAD & ANALYSIS
     // =========================================================================
@@ -186,25 +197,12 @@ const AIAdvisor = () => {
         // 2. Convert to base64 for Gemini
         const base64Data = await fileToBase64(fileToProcess);
         
-        // 3. Analyze with Gemini
-        let analysis = null;
-        if (genAI) {
-          analysis = await analyzeDocumentWithGemini({
-            file: fileToProcess,
-            base64Data,
-            genAI,
-            userPrompt: userMsg
-          });
-        } else {
-          // Fallback if no API key
-          analysis = {
-            documentType: "Uploaded Legal Document",
-            keyFacts: ["Document successfully uploaded to storage.", "Requires attorney review for formal legal extraction."],
-            practiceArea: sessionCategory || "Civil Law",
-            urgentIssues: "Verify statutory deadlines with counsel.",
-            recommendedAction: "We recommend booking a consultation with a verified lawyer below to review this document."
-          };
-        }
+        // 3. Analyze with Gemini (via gemini-proxy Edge Function)
+        const analysis = await analyzeDocumentWithGemini({
+          file: fileToProcess,
+          base64Data,
+          userPrompt: userMsg
+        });
 
         // 4. Update session category if detected
         const docCategory = analysis?.practiceArea || sessionCategory || "General Practice";
@@ -302,29 +300,7 @@ const AIAdvisor = () => {
         }
       }
 
-      let responseText = null;
-      if (genAI) {
-        const modelsToTry = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-2.0-flash-001", "gemini-2.0-flash-lite"];
-        for (const modelName of modelsToTry) {
-          try {
-            const model = genAI.getGenerativeModel({ model: modelName });
-            try {
-              const chat = model.startChat({ history: validHistory });
-              const result = await chat.sendMessage(userMsg);
-              responseText = result.response.text();
-            } catch (chatErr) {
-              const prompt = validHistory.length > 0 
-                ? validHistory.map(h => `${h.role}: ${h.parts[0].text}`).join('\n') + `\nuser: ${userMsg}`
-                : userMsg;
-              const result = await model.generateContent(prompt);
-              responseText = result.response.text();
-            }
-            if (responseText) break;
-          } catch (err) {
-            // Try next model
-          }
-        }
-      }
+      let responseText = await sendAIChatMessage(validHistory, userMsg);
 
       // 3. Fallback rule-engine if Gemini API fails or is unavailable
       if (!responseText) {

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase';
 import { realtimeSync } from '../../services/realtimeSync.service';
+import { getSignedDocumentUrl } from '../../services/storage.service';
 import toast from 'react-hot-toast';
 
 // Reusable Components
@@ -668,6 +669,15 @@ const LawyerCasesView = () => {
     }
   };
 
+  const handleOpenDocument = async (doc) => {
+    const url = await getSignedDocumentUrl(doc.file_url || doc.storage_url);
+    if (url) {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } else {
+      toast.error('Unable to open document. Please try again.');
+    }
+  };
+
   const handleMarkComplete = async (caseItem) => {
     if (!caseItem?.id) return;
     setIsCompleting(true);
@@ -1317,15 +1327,14 @@ const LawyerCasesView = () => {
                                 </div>
                               </div>
 
-                              <a
-                                href={doc.file_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
+                              <button
+                                type="button"
+                                onClick={() => handleOpenDocument(doc)}
                                 className="px-3 py-1.5 rounded-xl bg-white hover:bg-bg-light text-navy-primary text-xs font-bold border border-border-subtle shadow-2xs transition flex items-center gap-1 flex-shrink-0"
                               >
                                 <span className="material-symbols-outlined text-sm">open_in_new</span>
                                 <span>Open</span>
-                              </a>
+                              </button>
                             </div>
                           ))}
                       </div>

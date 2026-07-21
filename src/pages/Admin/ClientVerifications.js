@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../services/supabase';
+import { getSignedDocumentUrl } from '../../services/storage.service';
 import toast from 'react-hot-toast';
 
 const ClientVerifications = () => {
@@ -13,10 +14,26 @@ const ClientVerifications = () => {
 
   // Document Preview Modal State
   const [previewDoc, setPreviewDoc] = useState(null);
+  const [resolvedPreviewUrl, setResolvedPreviewUrl] = useState(null);
 
   useEffect(() => {
     fetchVerifications();
   }, []);
+
+  // Resolve the stored NID document reference into a short-lived signed URL
+  // whenever the previewed document changes (the storage bucket is now private).
+  useEffect(() => {
+    let cancelled = false;
+    setResolvedPreviewUrl(null);
+    if (previewDoc) {
+      getSignedDocumentUrl(previewDoc, 'documents').then((url) => {
+        if (!cancelled) setResolvedPreviewUrl(url);
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [previewDoc]);
 
   const fetchVerifications = async () => {
     try {
@@ -274,10 +291,15 @@ const ClientVerifications = () => {
             </button>
             
             <div className="bg-surface-white p-2 rounded-xl w-full flex items-center justify-center overflow-hidden" style={{ maxHeight: 'calc(90vh - 60px)' }}>
-              {previewDoc.toLowerCase().endsWith('.pdf') ? (
-                <iframe src={previewDoc} className="w-full h-[80vh] rounded-lg" title="Document Preview" />
+              {!resolvedPreviewUrl ? (
+                <div className="text-center text-text-muted p-10">
+                  <div className="text-4xl mb-2 animate-pulse">⏳</div>
+                  <p className="font-semibold">Resolving secure document link...</p>
+                </div>
+              ) : previewDoc.toLowerCase().endsWith('.pdf') ? (
+                <iframe src={resolvedPreviewUrl} className="w-full h-[80vh] rounded-lg" title="Document Preview" />
               ) : (
-                <img src={previewDoc} alt="Document Preview" className="max-w-full max-h-[80vh] object-contain rounded-lg" />
+                <img src={resolvedPreviewUrl} alt="Document Preview" className="max-w-full max-h-[80vh] object-contain rounded-lg" />
               )}
             </div>
           </div>

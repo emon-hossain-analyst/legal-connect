@@ -12,12 +12,25 @@ import { supabase } from './supabase';
  *  - All subscribers receive a normalised payload:
  *      { source, lawyerId, userId, is_verified, verification_status, record? }
  */
+const MAX_RECONNECT_DELAY_MS = 60000;
+const BASE_RECONNECT_DELAY_MS = 3000;
+
+// Audit #23: exponential backoff (3s, 6s, 12s, 24s, ... capped at 60s) instead
+// of retrying at a fixed 3s interval forever, which hammers Supabase during a
+// sustained outage instead of backing off.
+function nextReconnectDelay(attempt) {
+  const delay = BASE_RECONNECT_DELAY_MS * Math.pow(2, attempt);
+  return Math.min(delay, MAX_RECONNECT_DELAY_MS);
+}
+
 class RealtimeSyncService {
   constructor() {
     this._listeners = new Set();
     this._channel = null;
     this._subscribed = false;
     this._reconnectTimer = null;
+    this._reconnectAttempts = 0;
+    this._caseReconnectAttempts = 0;
   }
 
   // ─── public API ────────────────────────────────────────────────────────────
@@ -131,14 +144,15 @@ class RealtimeSyncService {
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           this._subscribed = true;
+          this._reconnectAttempts = 0;
         }
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           this._subscribed = false;
           supabase.removeChannel(this._channel);
           this._channel = null;
-          // Retry once after 3 s
+          const delay = nextReconnectDelay(this._reconnectAttempts++);
           clearTimeout(this._reconnectTimer);
-          this._reconnectTimer = setTimeout(() => this._ensureChannel(), 3000);
+          this._reconnectTimer = setTimeout(() => this._ensureChannel(), delay);
         }
       });
   }
@@ -233,6 +247,7 @@ class RealtimeSyncService {
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           this._caseSubscribed = true;
+          this._caseReconnectAttempts = 0;
         }
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           this._caseSubscribed = false;
@@ -240,8 +255,9 @@ class RealtimeSyncService {
             supabase.removeChannel(this._caseChannel);
             this._caseChannel = null;
           }
+          const delay = nextReconnectDelay(this._caseReconnectAttempts++);
           clearTimeout(this._caseReconnectTimer);
-          this._caseReconnectTimer = setTimeout(() => this._ensureCaseChannel(), 3000);
+          this._caseReconnectTimer = setTimeout(() => this._ensureCaseChannel(), delay);
         }
       });
   }
