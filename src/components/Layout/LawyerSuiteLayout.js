@@ -85,9 +85,6 @@ const LawyerSuiteLayout = () => {
           {/* Quick Links (Center/Right alignment) */}
           <div className="hidden lg:flex items-center gap-8 text-body-sm font-medium">
             <NavLink to="/lawyer-suite/dashboard" className={({isActive}) => isActive ? "text-primary font-bold border-b-2 border-secondary pb-1" : "text-on-surface-variant hover:text-primary transition-colors duration-200"}>Dashboard</NavLink>
-            <a href="#/" className="text-on-surface-variant hover:text-primary transition-colors duration-200">Clients</a>
-            <a href="#/" className="text-on-surface-variant hover:text-primary transition-colors duration-200">Messages</a>
-            <a href="#/" className="text-on-surface-variant hover:text-primary transition-colors duration-200">Help</a>
           </div>
 
           <div className="flex items-center gap-4 lg:border-l border-outline-variant lg:pl-6">
