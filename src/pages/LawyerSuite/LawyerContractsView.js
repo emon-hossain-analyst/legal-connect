@@ -125,6 +125,25 @@ const LawyerContractsView = () => {
     }
     setSubmitting(true);
     try {
+      // Prevent duplicate contracts: block a second still-active agreement with
+      // the same client and title (a genuinely new matter should use a distinct
+      // title). Terminal contracts don't count, so re-engagements are allowed.
+      const { data: existing } = await supabase
+        .from('contracts')
+        .select('id, status')
+        .eq('lawyer_id', user.id)
+        .eq('client_id', formData.client_id)
+        .ilike('title', (formData.title || '').trim());
+
+      const hasActiveDuplicate = (existing || []).some(c =>
+        !['completed', 'closed', 'cancelled', 'terminated', 'resolved'].includes(String(c.status || '').toLowerCase())
+      );
+      if (hasActiveDuplicate) {
+        toast.error('An active contract with this client and title already exists. Use a distinct title for a new matter.');
+        setSubmitting(false);
+        return;
+      }
+
       const numAmt = Number(formData.amount);
       const numRet = Number(formData.retainer_amount || 0);
       const payload = {

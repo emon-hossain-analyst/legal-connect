@@ -683,7 +683,16 @@ const LawyerCasesView = () => {
     setIsCompleting(true);
     try {
       // Invoke fn_complete_case which handles UUIDs, 'contract_UUID', and 'consultation_UUID'
-      const { error: rpcErr } = await supabase.rpc('fn_complete_case', { p_case_id: String(caseItem.id) });
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('fn_complete_case', { p_case_id: String(caseItem.id) });
+
+      // Completion is gated server-side (sql/69): a returned {success:false,
+      // blockers:[...]} means open milestones / unpaid balance, NOT an error.
+      if (rpcData && rpcData.success === false && Array.isArray(rpcData.blockers) && rpcData.blockers.length > 0) {
+        toast.error(`Can't complete yet:\n• ${rpcData.blockers.join('\n• ')}`, { duration: 6000 });
+        setIsCompleting(false);
+        return;
+      }
+
       if (rpcErr) {
         console.warn('[LawyerCasesView] fn_complete_case failed, trying direct table update:', rpcErr.message);
         if (!String(caseItem.id).startsWith('contract_') && !String(caseItem.id).startsWith('consultation_')) {

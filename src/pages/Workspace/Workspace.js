@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { supabase } from '../../services/supabase';
+import { supabase, isMissingFunctionError } from '../../services/supabase';
 import { getSignedDocumentUrl } from '../../services/storage.service';
 import { useAuth } from '../../context/AuthContext';
 import useChatSocket from '../../hooks/useChatSocket';
@@ -150,9 +150,31 @@ const Workspace = () => {
 
   const handleComplete = async () => {
     try {
-      const { error } = await supabase.from('contracts').update({ status: 'completed' }).eq('id', contract.id);
-      if (error) throw error;
-      toast.success('Contract marked as complete!');
+      // Completion is gated server-side (sql/69): refuses to close while
+      // milestones are open or a balance is outstanding, cascades the close,
+      // notifies both parties, and requests a client review.
+      const { data, error } = await supabase.rpc('fn_complete_contract', { p_contract_id: contract.id });
+
+      if (error) {
+        // Backward compatibility: if the gate RPC isn't deployed yet, fall
+        // back to the legacy direct update so pre-migration behavior holds.
+        if (isMissingFunctionError(error)) {
+          const { error: legacyErr } = await supabase.from('contracts').update({ status: 'completed' }).eq('id', contract.id);
+          if (legacyErr) throw legacyErr;
+          toast.success('Contract marked as complete!');
+          load();
+          return;
+        }
+        throw error;
+      }
+
+      if (data && data.success === false && Array.isArray(data.blockers) && data.blockers.length > 0) {
+        // Show exactly what's blocking completion (progressive disclosure).
+        toast.error(`Can't complete yet:\n• ${data.blockers.join('\n• ')}`, { duration: 6000 });
+        return;
+      }
+
+      toast.success(data?.already_completed ? 'Contract already complete.' : 'Contract marked as complete!');
       load();
     } catch (err) {
       toast.error(err.message || 'Failed to complete contract');
