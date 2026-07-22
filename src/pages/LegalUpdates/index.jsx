@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
 
 const PRESET_CATEGORIES = [
-  'All', 'General', 'Corporate Law', 'Family Law', 
+  'All', 'General', 'Corporate Law', 'Family Law',
   'Criminal Law', 'Real Estate', 'Immigration', 'Tax Law', 'Employment Law'
 ];
 
@@ -25,28 +26,31 @@ const SkeletonCard = () => (
 );
 
 const LegalUpdates = () => {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [updates, setUpdates] = useState([]);
+  const [categories, setCategories] = useState(PRESET_CATEGORIES);
   const [loading, setLoading] = useState(true);
-  
+
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('All');
-  
-  // Track expanded cards
-  const [expandedIds, setExpandedIds] = useState(new Set());
+  const [selectedCategory, setSelectedCategory] = useState(searchParams.get('category') || 'All');
 
   useEffect(() => {
     fetchUpdates();
+    fetchCategories();
   }, []);
 
   const fetchUpdates = async () => {
     try {
       setLoading(true);
+      // RLS returns only published, non-deleted posts to the public (migration 71).
       const { data, error } = await supabase
         .from('legal_updates')
         .select(`
           *,
           lawyer:users!legal_updates_lawyer_id_fkey(name, profile_picture_url)
         `)
+        .order('published_at', { ascending: false, nullsFirst: false })
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -58,24 +62,36 @@ const LegalUpdates = () => {
     }
   };
 
-  const toggleExpand = (id) => {
-    setExpandedIds(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(id)) {
-        newSet.delete(id);
-      } else {
-        newSet.add(id);
-      }
-      return newSet;
-    });
+  const fetchCategories = async () => {
+    try {
+      const { data } = await supabase
+        .from('blog_categories')
+        .select('name')
+        .eq('is_active', true)
+        .order('sort_order');
+      if (data && data.length) setCategories(['All', ...data.map((c) => c.name)]);
+    } catch { /* fall back to presets */ }
   };
 
-  const filteredUpdates = updates.filter(update => {
-    const matchesSearch = update.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          update.content.toLowerCase().includes(searchQuery.toLowerCase());
+  const goToPost = (post) => {
+    if (post.slug) navigate(`/legal-updates/${post.slug}`);
+  };
+
+  const matches = (update) => {
+    const q = searchQuery.toLowerCase();
+    const matchesSearch = (update.title || '').toLowerCase().includes(q) ||
+                          (update.content || '').toLowerCase().includes(q) ||
+                          (update.excerpt || '').toLowerCase().includes(q);
     const matchesCategory = selectedCategory === 'All' || update.category === selectedCategory;
     return matchesSearch && matchesCategory;
-  });
+  };
+
+  const filteredUpdates = updates.filter(matches);
+  // Featured hero: the first featured (or newest) published post, only when unfiltered.
+  const heroPost = (!searchQuery && selectedCategory === 'All')
+    ? (updates.find((u) => u.is_featured) || updates[0])
+    : null;
+  const gridPosts = heroPost ? filteredUpdates.filter((u) => u.id !== heroPost.id) : filteredUpdates;
 
   return (
     <div className="bg-bg-light min-h-screen pb-20">
@@ -102,13 +118,13 @@ const LegalUpdates = () => {
         
         {/* Categories */}
         <div className="flex flex-wrap items-center justify-center gap-2 mb-12">
-          {PRESET_CATEGORIES.map(cat => (
-            <button 
+          {categories.map(cat => (
+            <button
               key={cat}
               onClick={() => setSelectedCategory(cat)}
               className={`px-4 py-2 rounded-full text-sm font-semibold transition-colors border shadow-sm ${
-                selectedCategory === cat 
-                  ? 'bg-accent-gold text-navy-primary border-accent-gold' 
+                selectedCategory === cat
+                  ? 'bg-accent-gold text-navy-primary border-accent-gold'
                   : 'bg-white text-text-muted border-border-subtle hover:bg-bg-light'
               }`}
             >
@@ -117,43 +133,62 @@ const LegalUpdates = () => {
           ))}
         </div>
 
+        {/* Featured hero */}
+        {!loading && heroPost && (
+          <button
+            onClick={() => goToPost(heroPost)}
+            className="w-full text-left mb-12 grid grid-cols-1 lg:grid-cols-2 gap-0 bg-white rounded-2xl border border-border-subtle shadow-sm overflow-hidden hover:shadow-md transition group"
+          >
+            <div className="h-56 lg:h-full bg-navy-primary/5">
+              {heroPost.featured_image_url ? (
+                <img src={heroPost.featured_image_url} alt={heroPost.title} className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-6xl opacity-20">📰</div>
+              )}
+            </div>
+            <div className="p-8 flex flex-col justify-center">
+              <span className="inline-block px-3 py-1 bg-accent-gold/20 text-navy-primary text-xs font-bold uppercase tracking-widest rounded self-start mb-3">Featured · {heroPost.category || 'General'}</span>
+              <h2 className="text-2xl md:text-3xl font-serif font-bold text-navy-primary leading-tight group-hover:text-accent-gold transition-colors">{heroPost.title}</h2>
+              <p className="text-text-muted mt-3 line-clamp-3">{heroPost.excerpt || heroPost.content}</p>
+              <div className="flex items-center gap-3 mt-5 text-sm text-text-muted">
+                <span className="font-bold text-text-dark">{heroPost.lawyer?.name || 'LegalConnect'}</span>
+                <span>·</span><span>{new Date(heroPost.published_at || heroPost.created_at).toLocaleDateString()}</span>
+                {heroPost.reading_time && (<><span>·</span><span>{heroPost.reading_time} min read</span></>)}
+              </div>
+              <span className="mt-5 text-navy-primary font-bold group-hover:underline">Read article →</span>
+            </div>
+          </button>
+        )}
+
         {/* Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
           {loading ? (
             Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
-          ) : filteredUpdates.length > 0 ? (
-            filteredUpdates.map(update => {
-              const isExpanded = expandedIds.has(update.id);
+          ) : gridPosts.length > 0 ? (
+            gridPosts.map(update => {
               return (
-                <div 
-                  key={update.id} 
-                  className={`bg-white rounded-lg border border-border-subtle shadow-sm overflow-hidden flex flex-col transition-all duration-500 hover:shadow-md cursor-pointer ${
-                    isExpanded ? 'row-span-2' : ''
-                  }`}
-                  style={{
-                    maxHeight: isExpanded ? '2000px' : '400px',
-                  }}
-                  onClick={() => !isExpanded && toggleExpand(update.id)}
+                <div
+                  key={update.id}
+                  className="bg-white rounded-lg border border-border-subtle shadow-sm overflow-hidden flex flex-col transition-all duration-300 hover:shadow-md cursor-pointer"
+                  onClick={() => goToPost(update)}
                 >
+                  {update.featured_image_url && (
+                    <div className="h-40 bg-navy-primary/5"><img src={update.featured_image_url} alt={update.title} className="w-full h-full object-cover" /></div>
+                  )}
                   <div className="p-6 flex-1 flex flex-col">
                     <span className="inline-block px-3 py-1 bg-navy-primary/10 text-navy-primary text-xs font-bold uppercase tracking-widest rounded-sm mb-4 self-start">
                       {update.category || 'General'}
                     </span>
-                    <h2 className="text-xl font-bold text-navy-primary mb-4 leading-tight group-hover:text-accent-gold transition-colors">
+                    <h2 className="text-xl font-bold text-navy-primary mb-4 leading-tight hover:text-accent-gold transition-colors">
                       {update.title}
                     </h2>
-                    
-                    <div className={`text-text-muted text-sm flex-1 overflow-hidden transition-all duration-500 relative ${isExpanded ? '' : 'line-clamp-4'}`}>
-                      {update.content.split('\n').map((paragraph, idx) => (
-                        <p key={idx} className="mb-4">{paragraph}</p>
-                      ))}
-                      {!isExpanded && (
-                        <div className="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-white to-transparent pointer-events-none"></div>
-                      )}
+                    <div className="text-text-muted text-sm flex-1 overflow-hidden line-clamp-4">
+                      {update.excerpt || update.content}
                     </div>
+                    <span className="mt-4 text-navy-primary text-sm font-bold self-start hover:underline">Read More →</span>
                   </div>
 
-                  <div className="bg-bg-light/50 px-6 py-4 border-t border-border-subtle flex flex-col">
+                  <div className="bg-bg-light/50 px-6 py-4 border-t border-border-subtle">
                     <div className="flex justify-between items-center w-full">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-navy-primary text-white flex items-center justify-center font-bold text-xs uppercase overflow-hidden">
@@ -166,18 +201,9 @@ const LegalUpdates = () => {
                         <span className="text-sm font-bold text-text-dark">{update.lawyer?.name?.split(' ')[0] || 'Expert'}</span>
                       </div>
                       <div className="text-xs font-medium text-text-muted">
-                        {new Date(update.created_at).toLocaleDateString()}
+                        {new Date(update.published_at || update.created_at).toLocaleDateString()}
                       </div>
                     </div>
-                    
-                    {isExpanded && (
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); toggleExpand(update.id); }}
-                        className="mt-6 w-full py-2 bg-bg-light border border-border-subtle text-text-dark rounded text-sm font-bold hover:bg-gray-200 transition-colors"
-                      >
-                        Collapse Article
-                      </button>
-                    )}
                   </div>
                 </div>
               );

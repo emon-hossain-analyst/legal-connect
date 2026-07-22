@@ -21,6 +21,7 @@ const AdminLayout = () => {
     { name: 'Client Verifications', path: '/admin/client-verifications', icon: '👤' },
     { name: 'Categories', path: '/admin/categories', icon: '🗂️' },
     { name: 'Reviews', path: '/admin/reviews', icon: '⭐' },
+    { name: 'Blog / Legal Updates', path: '/admin/blog', icon: '📰' },
     { name: 'Messages', path: '/admin/messages', icon: '💬' },
     { name: 'Notifications', path: '/admin/notifications', icon: '🔔' },
     { name: 'Settings', path: '/admin/settings', icon: '⚙️' },

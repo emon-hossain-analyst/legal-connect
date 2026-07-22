@@ -26,6 +26,7 @@ import LawyerCommunicationPortal from './pages/LawyerSuite/LawyerCommunicationPo
 import Contact from './pages/Contact/Contact';
 import CaseTracking from './pages/CaseTracking/CaseTracking';
 import LegalUpdates from './pages/LegalUpdates';
+import BlogDetail from './pages/LegalUpdates/BlogDetail';
 import PublicLawyerProfile from './pages/LawyerProfile/PublicLawyerProfile';
 import JobBoard from './pages/JobBoard/JobBoard';
 import PostJob from './pages/PostJob/PostJob';
@@ -56,6 +57,7 @@ const FlaggedReviews = React.lazy(() => import('./pages/Admin/FlaggedReviews'));
 const AdminSettings = React.lazy(() => import('./pages/Admin/AdminSettings'));
 const AdminNotifications = React.lazy(() => import('./pages/Admin/AdminNotifications'));
 const SupportMessages = React.lazy(() => import('./pages/Admin/SupportMessages'));
+const BlogManagement = React.lazy(() => import('./pages/Admin/BlogManagement'));
 
 const LawyerDashboardView = React.lazy(() => import('./pages/LawyerSuite/LawyerDashboardView'));
 const LawyerBasicInfoView = React.lazy(() => import('./pages/LawyerSuite/LawyerBasicInfoView'));
@@ -167,6 +169,7 @@ function App() {
                   <Route path="/find-lawyers" element={<Navigate to="/lawyers" replace />} />
                   <Route path="/lawyers/:slug" element={<ErrorBoundary><PublicLawyerProfile /></ErrorBoundary>} />
                   <Route path="/legal-updates" element={<ErrorBoundary><LegalUpdates /></ErrorBoundary>} />
+                  <Route path="/legal-updates/:slug" element={<ErrorBoundary><BlogDetail /></ErrorBoundary>} />
                   <Route path="/updates" element={<Navigate to="/legal-updates" replace />} />
                   <Route path="/contact" element={<ErrorBoundary><Contact /></ErrorBoundary>} />
                   <Route path="/ai-advisor" element={<ErrorBoundary><AIAdvisor /></ErrorBoundary>} />
@@ -249,6 +252,7 @@ function App() {
                     <Route path="categories" element={<ErrorBoundary><CategoryManagement /></ErrorBoundary>} />
                     <Route path="jobs" element={<ErrorBoundary><JobsManagement /></ErrorBoundary>} />
                     <Route path="reviews" element={<ErrorBoundary><FlaggedReviews /></ErrorBoundary>} />
+                    <Route path="blog" element={<ErrorBoundary><BlogManagement /></ErrorBoundary>} />
                     <Route path="messages" element={<ErrorBoundary><SupportMessages /></ErrorBoundary>} />
                     <Route path="notifications" element={<ErrorBoundary><AdminNotifications /></ErrorBoundary>} />
                     <Route path="settings" element={<ErrorBoundary><AdminSettings /></ErrorBoundary>} />
