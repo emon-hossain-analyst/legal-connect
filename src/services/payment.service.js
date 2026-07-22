@@ -5,7 +5,7 @@
  * Designed as a standalone module so a real gateway (SSLCommerz/Stripe)
  * can replace only this file later without touching any other code.
  */
-import { supabase } from './supabase';
+import { supabase, isMissingFunctionError } from './supabase';
 
 /**
  * Get the current platform commission config from the database.
@@ -98,6 +98,27 @@ export const simulatePayment = async ({
       .single();
 
     if (confirmError) {
+      // Backward compatibility: if the confirm RPC hasn't been deployed yet
+      // (sql/66 not applied), fall back to a direct status update. This is
+      // only reachable pre-migration, where the legacy permissive payments
+      // UPDATE policy still allows it and the BEFORE UPDATE commission trigger
+      // still fires. Once the migration is applied the RPC exists and this
+      // branch is never taken.
+      if (isMissingFunctionError(confirmError)) {
+        const { data: legacyPayment, error: legacyError } = await supabase
+          .from('payments')
+          .update({ status: 'completed' })
+          .eq('id', pendingPayment.id)
+          .select()
+          .single();
+
+        if (legacyError) {
+          console.error('Payment confirmation (legacy path) error:', legacyError);
+          return { success: false, payment: pendingPayment, error: legacyError.message };
+        }
+        return { success: true, payment: legacyPayment, error: null };
+      }
+
       console.error('Payment confirmation error:', confirmError);
       return { success: false, payment: pendingPayment, error: confirmError.message };
     }

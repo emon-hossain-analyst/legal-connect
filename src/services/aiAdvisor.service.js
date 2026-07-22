@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, isMissingFunctionError } from './supabase';
 
 // ============================================================================
 // 1. LEGAL CATEGORY DETECTION (KEYWORD & PHRASE MAPPING)
@@ -182,7 +182,16 @@ export const queryMatchingLawyers = async ({
       p_exclude_ids: excludeIds
     });
 
-    if (error) throw error;
+    if (error) {
+      // Backward compatibility: if the RPC hasn't been deployed yet (sql/66
+      // not applied), fall back to the legacy client-side matching so the AI
+      // Advisor keeps returning lawyers during the migration window. Once the
+      // migration is applied the RPC exists and this branch is never taken.
+      if (isMissingFunctionError(error)) {
+        return await queryMatchingLawyersClientSide({ category, location, needType, offset, limit, excludeIds });
+      }
+      throw error;
+    }
 
     const lawyers = (data?.lawyers || []).map(l => ({
       ...l,
@@ -206,6 +215,128 @@ export const queryMatchingLawyers = async ({
       error: err.message
     };
   }
+};
+
+/**
+ * Legacy client-side lawyer matching. Retained only as a backward-compatible
+ * fallback for queryMatchingLawyers when the match_lawyers_for_ai RPC is not
+ * yet present in the database (pre-migration). Not used once sql/66 is applied.
+ * Mirrors the RPC's semantics: category match falls back to unfiltered results
+ * if nothing matches; location filter is only applied if it doesn't empty the
+ * result; sort order depends on needType.
+ */
+const queryMatchingLawyersClientSide = async ({
+  category = null,
+  location = null,
+  needType = 'consultation',
+  offset = 0,
+  limit = 3,
+  excludeIds = []
+}) => {
+  const { data: lawyersData, error: lawyersErr } = await supabase
+    .from('lawyers')
+    .select('*, user:users(name, profile_picture_url, phone, email)')
+    .eq('is_verified', true);
+
+  if (lawyersErr) throw lawyersErr;
+
+  const [areasRes, expRes, junctionRes] = await Promise.all([
+    supabase.from('practice_areas').select('*'),
+    supabase.from('legal_expertise').select('*'),
+    supabase.from('lawyer_expertise_junction').select('*')
+  ]);
+
+  const practiceAreas = areasRes.data || [];
+  const legalExpertise = expRes.data || [];
+  const junctionData = junctionRes.data || [];
+
+  let allLawyers = (lawyersData || []).map(lwr => {
+    const lwrId = lwr.id || lwr.user_id;
+    const expertiseIds = junctionData
+      .filter(j => j.lawyer_id === lwrId || j.lawyer_id === lwr.user_id)
+      .map(j => j.expertise_id);
+
+    const expertiseNames = expertiseIds.map(id => {
+      const expObj = legalExpertise.find(e => e.id === id);
+      return expObj ? expObj.name : '';
+    }).filter(Boolean);
+
+    const areaNames = expertiseIds.map(id => {
+      const expObj = legalExpertise.find(e => e.id === id);
+      const areaObj = practiceAreas.find(pa => pa.id === expObj?.practice_area_id);
+      return areaObj ? areaObj.name : '';
+    }).filter(Boolean);
+
+    return {
+      ...lwr,
+      expertiseNames,
+      areaNames,
+      full_name: lwr.user?.name || lwr.full_name || 'Verified Lawyer',
+      avatar_url: lwr.user?.profile_picture_url || lwr.avatar_url,
+      phone: lwr.user?.phone || lwr.phone,
+      email: lwr.user?.email || lwr.email
+    };
+  });
+
+  if (excludeIds && excludeIds.length > 0) {
+    allLawyers = allLawyers.filter(l => !excludeIds.includes(l.id) && !excludeIds.includes(l.user_id));
+  }
+
+  let matchedLawyers = [...allLawyers];
+  let isFallback = false;
+
+  if (category) {
+    const catLower = category.toLowerCase();
+    const rootConcept = catLower.replace(' law', '').replace(' and ', ' ').trim();
+    const categoryFiltered = matchedLawyers.filter(l => {
+      const specMatch = l.specialization?.toLowerCase().includes(rootConcept) || l.specialization?.toLowerCase().includes(catLower);
+      const bioMatch = l.bio?.toLowerCase().includes(rootConcept);
+      const expMatch = l.expertiseNames?.some(name => name.toLowerCase().includes(rootConcept));
+      const areaMatch = l.areaNames?.some(name => name.toLowerCase().includes(rootConcept));
+      return specMatch || bioMatch || expMatch || areaMatch;
+    });
+    if (categoryFiltered.length > 0) {
+      matchedLawyers = categoryFiltered;
+    } else {
+      isFallback = true;
+    }
+  }
+
+  if (location && !isFallback) {
+    const locLower = location.toLowerCase();
+    const locationFiltered = matchedLawyers.filter(l =>
+      l.location?.toLowerCase().includes(locLower) || l.city?.toLowerCase().includes(locLower)
+    );
+    if (locationFiltered.length > 0) {
+      matchedLawyers = locationFiltered;
+    }
+  }
+
+  if (needType === 'case') {
+    matchedLawyers.sort((a, b) => {
+      const expA = (a.experience_years || 0) >= 3 ? 1 : 0;
+      const expB = (b.experience_years || 0) >= 3 ? 1 : 0;
+      if (expA !== expB) return expB - expA;
+      return (b.avg_rating || 0) - (a.avg_rating || 0);
+    });
+  } else {
+    matchedLawyers.sort((a, b) => {
+      if ((b.avg_rating || 0) !== (a.avg_rating || 0)) {
+        return (b.avg_rating || 0) - (a.avg_rating || 0);
+      }
+      return (b.completed_cases || 0) - (a.completed_cases || 0);
+    });
+  }
+
+  const totalMatches = matchedLawyers.length;
+  const paginatedLawyers = matchedLawyers.slice(offset, offset + limit);
+
+  return {
+    lawyers: paginatedLawyers,
+    totalMatches,
+    isFallback,
+    category: category || 'General Practice'
+  };
 };
 
 // ============================================================================

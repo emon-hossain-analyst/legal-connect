@@ -34,3 +34,6 @@ sql/
 \# LegalConnect.txt
 make.md
 proposal_extracted.txt
+
+.vercel
+.env*
