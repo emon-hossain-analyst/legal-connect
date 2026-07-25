@@ -21,6 +21,31 @@ export const CONTRACT_STATUS = {
   ARCHIVED: 'ARCHIVED',
 };
 
+// Human-readable labels — raw canonical values like REVIEW_PENDING should
+// never be rendered directly to users.
+export const CONTRACT_STATUS_LABELS = {
+  [CONTRACT_STATUS.DRAFT]: 'Draft',
+  [CONTRACT_STATUS.PENDING_ACCEPTANCE]: 'Awaiting Your Acceptance',
+  [CONTRACT_STATUS.ACCEPTED]: 'Accepted',
+  [CONTRACT_STATUS.ACTIVE]: 'Active',
+  [CONTRACT_STATUS.MILESTONE_IN_PROGRESS]: 'Milestone In Progress',
+  [CONTRACT_STATUS.MILESTONE_COMPLETED]: 'Milestone Completed',
+  [CONTRACT_STATUS.DELIVERY_SUBMITTED]: 'Delivery Submitted',
+  [CONTRACT_STATUS.UNDER_CLIENT_REVIEW]: 'Under Client Review',
+  [CONTRACT_STATUS.REVISION_REQUESTED]: 'Revision Requested',
+  [CONTRACT_STATUS.APPROVED]: 'Approved',
+  [CONTRACT_STATUS.COMPLETION_REQUESTED]: 'Awaiting Client Approval',
+  [CONTRACT_STATUS.COMPLETED]: 'Completed',
+  [CONTRACT_STATUS.REVIEW_PENDING]: 'Completed — Review Pending',
+  [CONTRACT_STATUS.REVIEWED]: 'Completed — Reviewed',
+  [CONTRACT_STATUS.CLOSED]: 'Closed',
+  [CONTRACT_STATUS.TERMINATED]: 'Terminated',
+  [CONTRACT_STATUS.ARCHIVED]: 'Archived',
+};
+
+export const contractStatusLabel = (status) =>
+  CONTRACT_STATUS_LABELS[status] || String(status || '').replace(/_/g, ' ');
+
 const ACTIVE_STATUSES = new Set([
   CONTRACT_STATUS.PENDING_ACCEPTANCE,
   CONTRACT_STATUS.ACCEPTED,

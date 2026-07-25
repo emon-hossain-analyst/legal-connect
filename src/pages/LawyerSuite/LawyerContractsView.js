@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../services/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { realtimeSync } from '../../services/realtimeSync.service';
 import toast from 'react-hot-toast';
-import { CONTRACT_STATUS } from '../../constants/contractStatus';
+import { CONTRACT_STATUS, contractStatusLabel } from '../../constants/contractStatus';
 
 const LawyerContractsView = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [contracts, setContracts] = useState([]);
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -224,7 +226,7 @@ const LawyerContractsView = () => {
                 <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${
                   contract.status === CONTRACT_STATUS.ACTIVE ? 'bg-[#e6f4ea] text-[#1e8e3e]' : contract.status === CONTRACT_STATUS.PENDING_ACCEPTANCE ? 'bg-[#fff8e1] text-[#f57f17]' : 'bg-gray-100 text-gray-600'
                 }`}>
-                  {contract.status}
+                  {contractStatusLabel(contract.status)}
                 </span>
               </div>
 
@@ -249,6 +251,16 @@ const LawyerContractsView = () => {
               </div>
 
               <div className="mt-4 pt-4 border-t border-gray-100 flex justify-end items-center space-x-2">
+                {/* The execution workflow (milestones, deliverables, completion)
+                    lives in the case drawer — route there instead of dead-ending. */}
+                {contract.case_id && (
+                  <button
+                    onClick={() => navigate(`/lawyer-suite/cases?case=${contract.case_id}`)}
+                    className="px-3 py-1.5 bg-[#e8f0fe] text-[#041635] text-xs font-bold rounded hover:bg-[#d2e3fc] transition-colors"
+                  >
+                    Manage Case
+                  </button>
+                )}
                 {contract.status === CONTRACT_STATUS.ACTIVE && (
                   <button onClick={() => updateContractStatus(contract.id, 'terminate')} className="px-3 py-1.5 bg-red-100 text-red-700 text-xs font-bold rounded hover:bg-red-200 transition-colors">Terminate Contract</button>
                 )}
