@@ -14,6 +14,7 @@ import CaseFilters from '../../components/LawyerCaseTracking/CaseFilters';
 import CaseCard from '../../components/LawyerCaseTracking/CaseCard';
 import TimelineCard from '../../components/LawyerCaseTracking/TimelineCard';
 import ContractInfo from '../../components/LawyerCaseTracking/ContractInfo';
+import ReviewClientModal from '../../components/LawyerCaseTracking/ReviewClientModal';
 import ClientInfo from '../../components/LawyerCaseTracking/ClientInfo';
 import PaymentSummary from '../../components/LawyerCaseTracking/PaymentSummary';
 import UpcomingEvents from '../../components/LawyerCaseTracking/UpcomingEvents';
@@ -71,6 +72,7 @@ const LawyerCasesView = () => {
   const [reviewNote, setReviewNote] = useState('');
   const [reviewTitle, setReviewTitle] = useState('');
   const [deliverableFile, setDeliverableFile] = useState(null);
+  const [reviewingClientCase, setReviewingClientCase] = useState(null);
   const [submittingContractAction, setSubmittingContractAction] = useState(false);
   const [contractTimeline, setContractTimeline] = useState([]);
 
@@ -672,6 +674,38 @@ const LawyerCasesView = () => {
     finally { setSubmittingContractAction(false); }
   };
 
+  const handleSubmitMilestone = async (milestoneId) => {
+    setSubmittingContractAction(true);
+    try {
+      const { error } = await supabase.rpc('fn_submit_milestone', { p_milestone_id: milestoneId });
+      if (error) throw error;
+      toast.success('Milestone submitted for client review.');
+      fetchMilestones(selectedCase.id);
+      fetchCasesData();
+      realtimeSync.broadcastCaseChange({ action: 'MILESTONE_SUBMITTED', caseId: selectedCase?.id });
+    } catch (err) { toast.error(err.message || 'Failed to submit milestone'); }
+    finally { setSubmittingContractAction(false); }
+  };
+
+  const handleRequestCompletion = async (contractId) => {
+    const targetId = contractId || selectedCase?.contract?.id;
+    if (!targetId) { toast.error('A linked contract is required to request completion.'); return; }
+    setSubmittingContractAction(true);
+    try {
+      const { data, error } = await supabase.rpc('fn_request_case_completion', { p_contract_id: targetId });
+      if (error) throw error;
+      if (data?.success === false && Array.isArray(data.blockers) && data.blockers.length > 0) {
+        toast.error(`Can't request completion yet:\n• ${data.blockers.join('\n• ')}`, { duration: 6000 });
+        return;
+      }
+      toast.success('Completion requested. Awaiting client approval.');
+      fetchCasesData();
+      fetchContractTimeline(targetId);
+      realtimeSync.broadcastCaseChange({ action: 'COMPLETION_REQUESTED', contractId: targetId, caseId: selectedCase?.id });
+    } catch (err) { toast.error(err.message || 'Failed to request completion'); }
+    finally { setSubmittingContractAction(false); }
+  };
+
   const handleOpenDetails = (caseItem, tab = 'overview', action = null) => {
     setSelectedCase(caseItem);
     setDrawerTab(tab);
@@ -1109,6 +1143,34 @@ const LawyerCasesView = () => {
                     deliverables={documents}
                   />
 
+                  {/* Submit a milestone for client review — the handover step
+                      between creating a milestone and the client approving it. */}
+                  {milestones.some(m => ['pending', 'revision_requested', 'rejected'].includes(String(m.status).toLowerCase())) && (
+                    <div className="bg-white rounded-2xl border border-border-subtle p-6 shadow-sm space-y-3">
+                      <h4 className="font-serif font-bold text-base text-navy-primary flex items-center gap-2 border-b border-border-subtle pb-3">
+                        <span className="material-symbols-outlined text-lg">outbox</span>
+                        <span>Submit Milestone for Client Review</span>
+                      </h4>
+                      {milestones
+                        .filter(m => ['pending', 'revision_requested', 'rejected'].includes(String(m.status).toLowerCase()))
+                        .map(m => (
+                          <div key={m.id} className="flex items-center justify-between gap-3 p-3 rounded-xl bg-bg-light/70 border border-border-subtle/60">
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-navy-primary truncate">{m.title}</p>
+                              <p className="text-[11px] text-text-muted capitalize">{String(m.status).replace('_', ' ')}</p>
+                            </div>
+                            <button
+                              onClick={() => handleSubmitMilestone(m.id)}
+                              disabled={submittingContractAction}
+                              className="shrink-0 px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition disabled:opacity-50"
+                            >
+                              Submit for Review
+                            </button>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+
                   {/* Add Milestone Form (only if real case) */}
                   {typeof selectedCase.id === 'string' && !selectedCase.id.startsWith('contract_') && !selectedCase.id.startsWith('consultation_') && (
                     <form onSubmit={handleCreateMilestone} className="bg-white rounded-2xl border border-border-subtle p-6 shadow-sm space-y-4">
@@ -1291,6 +1353,41 @@ const LawyerCasesView = () => {
                         </>
                       )}
 
+                      {/* Awaiting the client's completion decision */}
+                      {selectedCase.contract.status === CONTRACT_STATUS.COMPLETION_REQUESTED && (
+                        <div className="p-3 rounded-xl bg-blue-50 border border-blue-200">
+                          <p className="text-xs font-bold text-blue-800 flex items-center gap-1">
+                            <span className="material-symbols-outlined text-sm">hourglass_top</span>
+                            Completion requested — awaiting client approval.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Request Case Completion — the lawyer's final step before closure */}
+                      {[CONTRACT_STATUS.ACTIVE, CONTRACT_STATUS.MILESTONE_COMPLETED, CONTRACT_STATUS.APPROVED].includes(selectedCase.contract.status) && (
+                        <button
+                          onClick={() => handleRequestCompletion(selectedCase.contract.id)}
+                          disabled={submittingContractAction}
+                          className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                          <span className="material-symbols-outlined text-sm">task_alt</span>
+                          {submittingContractAction ? 'Requesting...' : 'Request Case Completion'}
+                        </button>
+                      )}
+
+                      {/* Review Client — mirrors the client's review prompt in CaseTracking.js */}
+                      {[CONTRACT_STATUS.COMPLETED, CONTRACT_STATUS.REVIEW_PENDING, CONTRACT_STATUS.REVIEWED].includes(selectedCase.contract.status) && (
+                        <div className="p-3 rounded-xl bg-amber-50 border border-amber-200">
+                          <p className="text-xs font-bold text-amber-800 mb-2">This matter is complete. Leave a review for your client.</p>
+                          <button
+                            onClick={() => setReviewingClientCase(selectedCase)}
+                            className="w-full py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1"
+                          >
+                            <span className="material-symbols-outlined text-sm">rate_review</span> Review Client
+                          </button>
+                        </div>
+                      )}
+
                       {/* Contract Timeline */}
                       {contractTimeline.length > 0 && (
                         <div className="space-y-2 pt-2 border-t border-border-subtle">
@@ -1432,6 +1529,16 @@ const LawyerCasesView = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {reviewingClientCase && (
+        <ReviewClientModal
+          contractId={reviewingClientCase.contract?.id}
+          clientId={reviewingClientCase.client?.id || reviewingClientCase.client_id}
+          clientName={reviewingClientCase.client?.name || reviewingClientCase.client?.full_name}
+          onClose={() => setReviewingClientCase(null)}
+          onSuccess={() => fetchCasesData()}
+        />
       )}
     </div>
   );

@@ -622,6 +622,46 @@ const CaseTracking = () => {
     }
   };
 
+  const handleApproveCompletion = async (contractId, approve) => {
+    if (!contractId) { toast.error('No active contract found for this case.'); return; }
+    if (approve && !window.confirm('Approve completion and close this matter? Payments will be finalized and reviews unlocked.')) return;
+    setSubmittingAction(true);
+    try {
+      const { error } = await supabase.rpc('fn_client_approve_completion', {
+        p_contract_id: contractId,
+        p_approve: approve,
+        p_note: approve ? null : (revisionNoteInput.trim() || null)
+      });
+      if (error) throw error;
+      toast.success(approve ? 'Case completed. You can now leave a review.' : 'Sent back to your advocate for more work.');
+      setSelectedCaseModal(null);
+      fetchDashboardData();
+      realtimeSync.broadcastCaseChange({ action: approve ? 'CASE_COMPLETED' : 'COMPLETION_DECLINED', contractId });
+    } catch (err) {
+      toast.error(`Failed: ${err.message}`);
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  const handleApproveMilestone = async (milestoneId) => {
+    setSubmittingAction(true);
+    try {
+      const { error } = await supabase.rpc('fn_approve_milestone_and_release_funds', {
+        p_milestone_id: milestoneId,
+        p_client_id: user?.id
+      });
+      if (error) throw error;
+      toast.success('Milestone approved and payment released.');
+      fetchDashboardData();
+      realtimeSync.broadcastCaseChange({ action: 'MILESTONE_APPROVED' });
+    } catch (err) {
+      toast.error(`Failed to approve milestone: ${err.message}`);
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
   // --- Render Loading Skeleton State ---
   if (loading) {
     return (
@@ -1187,8 +1227,65 @@ const CaseTracking = () => {
                 </div>
               )}
 
+              {/* Advocate requested completion — client must approve to close */}
+              {selectedCaseModal.contract?.status === CONTRACT_STATUS.COMPLETION_REQUESTED && (
+                <div style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '12px', padding: '18px', marginTop: '20px' }}>
+                  <h4 style={{ margin: '0 0 6px 0', color: '#047857', fontSize: '15px' }}>✅ Approval Needed: Case Completion</h4>
+                  <p style={{ margin: '0 0 14px 0', fontSize: '13px', color: '#065F46' }}>
+                    Your advocate has requested to close this matter. Approving finalizes payment and unlocks reviews. If work remains, send it back instead.
+                  </p>
+                  <textarea
+                    value={revisionNoteInput}
+                    onChange={(e) => setRevisionNoteInput(e.target.value)}
+                    placeholder="Optional: what still needs doing? (only used if you send it back)"
+                    rows={2}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #A7F3D0', fontSize: '13px', fontFamily: 'inherit', marginBottom: '12px', resize: 'vertical' }}
+                  />
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => handleApproveCompletion(selectedCaseModal.contract?.id, true)}
+                      disabled={submittingAction}
+                      style={{ padding: '10px 18px', background: '#10B981', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }}
+                    >
+                      ✓ Approve & Close Case
+                    </button>
+                    <button
+                      onClick={() => handleApproveCompletion(selectedCaseModal.contract?.id, false)}
+                      disabled={submittingAction}
+                      style={{ padding: '10px 18px', background: '#F59E0B', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }}
+                    >
+                      ↩ Send Back for More Work
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Milestones awaiting the client's approval */}
+              {Array.isArray(selectedCaseModal.milestones) && selectedCaseModal.milestones.some(m => String(m.status).toLowerCase() === 'submitted') && (
+                <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '12px', padding: '18px', marginTop: '20px' }}>
+                  <h4 style={{ margin: '0 0 12px 0', color: '#1E40AF', fontSize: '15px' }}>📦 Milestones Awaiting Your Approval</h4>
+                  {selectedCaseModal.milestones
+                    .filter(m => String(m.status).toLowerCase() === 'submitted')
+                    .map(m => (
+                      <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', background: '#fff', border: '1px solid #DBEAFE', borderRadius: '8px', padding: '12px', marginBottom: '8px' }}>
+                        <div style={{ minWidth: 0 }}>
+                          <p style={{ margin: 0, fontSize: '13px', fontWeight: 'bold', color: '#1E3A8A' }}>{m.title}</p>
+                          {m.description && <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#475569' }}>{m.description}</p>}
+                        </div>
+                        <button
+                          onClick={() => handleApproveMilestone(m.id)}
+                          disabled={submittingAction}
+                          style={{ flexShrink: 0, padding: '8px 14px', background: '#2563EB', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}
+                        >
+                          Approve & Release
+                        </button>
+                      </div>
+                    ))}
+                </div>
+              )}
+
               {/* Review Box when case is completed */}
-              {(selectedCaseModal.status?.toLowerCase() === 'completed' || selectedCaseModal.contract?.status?.toLowerCase() === 'completed') && (
+              {(selectedCaseModal.status?.toLowerCase() === 'completed' || [CONTRACT_STATUS.COMPLETED, CONTRACT_STATUS.REVIEW_PENDING, CONTRACT_STATUS.REVIEWED].includes(selectedCaseModal.contract?.status)) && (
                 <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '12px', padding: '18px', marginTop: '20px' }}>
                   <h4 style={{ margin: '0 0 6px 0', color: '#B45309', fontSize: '15px' }}>★ Advocate Performance Review</h4>
                   <p style={{ margin: '0 0 14px 0', fontSize: '13px', color: '#78350F' }}>

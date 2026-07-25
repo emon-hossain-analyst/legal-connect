@@ -52,7 +52,7 @@ const ReviewSubmissionModal = ({ caseItem, contractId, lawyerId, onClose, onSucc
         return;
       }
       try {
-        let query = supabase.from('reviews').select('*');
+        let query = supabase.from('reviews').select('*').eq('reviewer_role', 'client');
         if (targetContractId) {
           query = query.eq('contract_id', targetContractId);
         } else {
@@ -144,6 +144,9 @@ const ReviewSubmissionModal = ({ caseItem, contractId, lawyerId, onClose, onSucc
         if (rpcErr) {
           // Direct insert fallback
           const { error: insErr } = await supabase.from('reviews').insert([{
+            reviewer_id: user?.id,
+            reviewee_id: targetLawyerId,
+            reviewer_role: 'client',
             lawyer_id: targetLawyerId,
             client_id: user?.id,
             contract_id: targetContractId || null,

@@ -19,6 +19,7 @@ const ClientMyPosts = () => {
   // Change request modal state
   const [changeRequestModal, setChangeRequestModal] = useState(null); // { type: 'proposal'|'contract', id, contractId }
   const [changeNote, setChangeNote] = useState('');
+  const [counterAmount, setCounterAmount] = useState('');
 
   const clientId = user?.id || user?.auth_id;
 
@@ -123,23 +124,25 @@ const ClientMyPosts = () => {
     if (!window.confirm(`Accept ${proposal.lawyer?.full_name || proposal.lawyer?.name || 'this lawyer'}'s proposal?\n\nThis will create a case workspace and close the job to new proposals.`)) return;
     try {
       setProcessingId(proposal.id);
-      const { error } = await supabase.rpc('fn_accept_job_proposal_transactional', {
+      const { data, error } = await supabase.rpc('fn_accept_job_proposal_transactional', {
         p_proposal_id: Number(proposal.id),
         p_client_id: clientId
       });
-      if (error) {
-        // Fallback
-        const { error: fb } = await supabase
-          .from('job_proposals')
-          .update({ status: 'accepted', updated_at: new Date().toISOString() })
-          .eq('id', proposal.id);
-        if (fb) throw fb;
+      // No silent fallback here: a direct `job_proposals.status = 'accepted'`
+      // update without the RPC's contract/case creation leaves the proposal
+      // marked accepted with nothing for either party to actually act on —
+      // exactly the "contract can't advance" trap this was covering up.
+      // Surface the real error instead so it can be retried or reported.
+      if (error) throw error;
+      if (!data?.contract_id) {
+        throw new Error('Proposal processed but no contract was created — please contact support.');
       }
       toast.success('Proposal accepted! Case workspace created.');
       await fetchMyPosts();
       await fetchProposals(selectedPost.id);
     } catch (err) {
-      toast.error('Failed to accept proposal');
+      console.error('[ClientMyPosts] Accept proposal failed:', err);
+      toast.error(err.message || 'Failed to accept proposal');
     } finally {
       setProcessingId(null);
     }
@@ -169,13 +172,26 @@ const ClientMyPosts = () => {
     try {
       setProcessingId(modal.id);
       if (modal.type === 'proposal') {
-        // For proposals: add a note and keep pending (or use a custom status)
-        const { error } = await supabase
-          .from('job_proposals')
-          .update({ status: 'pending', cover_letter: (modal.originalCoverLetter || '') + '\n\n[Client requested changes: ' + changeNote + ']', updated_at: new Date().toISOString() })
-          .eq('id', modal.id);
+        // Requesting changes on a proposal is a counter-offer: it must move the
+        // proposal to 'counter_offer' via fn_send_counter_offer (which also
+        // records the offer and notifies the lawyer). The previous version
+        // re-set status to 'pending' and appended the note into the lawyer's
+        // own cover_letter — no state transition, and it corrupted their
+        // submitted text.
+        const amt = Number(counterAmount);
+        if (!amt || amt <= 0) {
+          toast.error('Please enter your proposed fee for the counter offer.');
+          setProcessingId(null);
+          return;
+        }
+        const { error } = await supabase.rpc('fn_send_counter_offer', {
+          p_proposal_id: Number(modal.id),
+          p_amount: amt,
+          p_note: changeNote.trim()
+        });
         if (error) throw error;
-        toast.success('Change request sent to lawyer.');
+        toast.success('Counter offer sent to lawyer.');
+        if (selectedPost?.id) await fetchProposals(selectedPost.id);
       } else if (modal.type === 'contract') {
         const { error } = await supabase.rpc('fn_request_contract_changes', {
           p_contract_id: modal.contractId,
@@ -188,6 +204,7 @@ const ClientMyPosts = () => {
       }
       setChangeRequestModal(null);
       setChangeNote('');
+      setCounterAmount('');
     } catch (err) {
       toast.error('Failed to send change request: ' + err.message);
     } finally {
@@ -444,10 +461,29 @@ const ClientMyPosts = () => {
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="font-extrabold text-[#041635] text-lg">Request Changes</h3>
-              <button onClick={() => setChangeRequestModal(null)} className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500">✕</button>
+              <h3 className="font-extrabold text-[#041635] text-lg">
+                {changeRequestModal.type === 'contract' ? 'Request Changes' : 'Send Counter Offer'}
+              </h3>
+              <button onClick={() => { setChangeRequestModal(null); setCounterAmount(''); }} className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500">✕</button>
             </div>
-            <p className="text-sm text-[#8393b8]">Describe the changes you'd like the lawyer to make to their {changeRequestModal.type === 'contract' ? 'contract' : 'proposal'}.</p>
+            <p className="text-sm text-[#8393b8]">
+              {changeRequestModal.type === 'contract'
+                ? "Describe the changes you'd like the lawyer to make to their contract."
+                : 'Propose your own fee and explain what you\'d like changed. The proposal moves to Counter Offer until you both agree.'}
+            </p>
+            {changeRequestModal.type === 'proposal' && (
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-[#8393b8] mb-1">Your Proposed Fee (BDT)</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={counterAmount}
+                  onChange={e => setCounterAmount(e.target.value)}
+                  placeholder="e.g. 3500"
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#041635]"
+                />
+              </div>
+            )}
             <textarea
               value={changeNote}
               onChange={e => setChangeNote(e.target.value)}
@@ -456,13 +492,13 @@ const ClientMyPosts = () => {
               className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#041635] resize-none"
             />
             <div className="flex justify-end gap-3 pt-2">
-              <button onClick={() => setChangeRequestModal(null)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-bold text-gray-600 hover:bg-gray-50 transition">Cancel</button>
+              <button onClick={() => { setChangeRequestModal(null); setCounterAmount(''); }} className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-bold text-gray-600 hover:bg-gray-50 transition">Cancel</button>
               <button
                 onClick={handleRequestChanges}
-                disabled={!changeNote.trim() || !!processingId}
+                disabled={!changeNote.trim() || !!processingId || (changeRequestModal.type === 'proposal' && !(Number(counterAmount) > 0))}
                 className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold transition disabled:opacity-50"
               >
-                Send Request
+                {changeRequestModal.type === 'contract' ? 'Send Request' : 'Send Counter Offer'}
               </button>
             </div>
           </div>
