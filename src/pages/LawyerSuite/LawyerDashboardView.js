@@ -202,6 +202,8 @@ const LawyerDashboardView = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'cases' }, () => fetchDashboardData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => fetchDashboardData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'contracts' }, () => fetchDashboardData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => fetchDashboardData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lawyer_payouts' }, () => fetchDashboardData())
       .subscribe();
     return () => { supabase.removeChannel(channel); };
     // eslint-disable-next-line react-hooks/exhaustive-deps

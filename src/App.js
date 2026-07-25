@@ -69,6 +69,7 @@ const LawyerPortfolioView = React.lazy(() => import('./pages/LawyerSuite/LawyerP
 const LawyerAnalyticsView = React.lazy(() => import('./pages/LawyerSuite/LawyerAnalyticsView'));
 const LawyerCasesView = React.lazy(() => import('./pages/LawyerSuite/LawyerCasesView'));
 const LawyerAppointmentsView = React.lazy(() => import('./pages/LawyerSuite/LawyerAppointmentsView'));
+const BookingHistory = React.lazy(() => import('./pages/LawyerSuite/BookingHistory'));
 const LawyerContractsView = React.lazy(() => import('./pages/LawyerSuite/LawyerContractsView'));
 const LawyerBillingView = React.lazy(() => import('./pages/LawyerSuite/LawyerBillingView'));
 const LawyerNotificationsView = React.lazy(() => import('./pages/LawyerSuite/LawyerNotificationsView'));
@@ -279,6 +280,7 @@ function App() {
                     <Route path="cases/:caseId" element={<ErrorBoundary><LawyerCasesView /></ErrorBoundary>} />
                     <Route path="proposals" element={<ErrorBoundary><LawyerProposalsView /></ErrorBoundary>} />
                     <Route path="appointments" element={<ErrorBoundary><LawyerAppointmentsView /></ErrorBoundary>} />
+                    <Route path="booking-history" element={<ErrorBoundary><BookingHistory /></ErrorBoundary>} />
                     <Route path="contracts" element={<ErrorBoundary><LawyerContractsView /></ErrorBoundary>} />
                     <Route path="billing" element={<ErrorBoundary><LawyerBillingView /></ErrorBoundary>} />
                     <Route path="notifications" element={<ErrorBoundary><LawyerNotificationsView /></ErrorBoundary>} />

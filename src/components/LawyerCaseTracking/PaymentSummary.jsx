@@ -1,6 +1,13 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { getCommissionConfig } from '../../services/payment.service';
 
 const PaymentSummary = ({ caseData, payments = [] }) => {
+  const [commissionRate, setCommissionRate] = useState(10.00);
+
+  useEffect(() => {
+    getCommissionConfig().then((cfg) => setCommissionRate(Number(cfg?.commission_percentage ?? 10.00)));
+  }, []);
+
   const agreedFee = Number(
     caseData?.contract?.amount ||
     caseData?.contract?.agreed_amount ||
@@ -23,9 +30,8 @@ const PaymentSummary = ({ caseData, payments = [] }) => {
 
   const pendingAmount = Math.max(0, agreedFee - paidAmount);
 
-  // Platform fee (Standard 10% for escrow assurance)
-  const platformFeeRate = 0.10;
-  const platformFee = Math.round(agreedFee * platformFeeRate);
+  // Platform fee — reads the live rate from platform_commission_config, never hardcoded.
+  const platformFee = Math.round(agreedFee * (commissionRate / 100));
   const netEarnings = Math.max(0, agreedFee - platformFee);
 
   return (
@@ -64,7 +70,7 @@ const PaymentSummary = ({ caseData, payments = [] }) => {
 
         <div className="flex items-center justify-between p-2.5 rounded-xl bg-gray-50 border border-gray-200/80">
           <span className="font-bold text-gray-600 flex items-center gap-1">
-            <span>Platform Service Fee (10%)</span>
+            <span>Platform Service Fee ({commissionRate}%)</span>
             <span className="text-[10px] text-text-muted">(Security & Escrow)</span>
           </span>
           <span className="font-semibold text-gray-700">

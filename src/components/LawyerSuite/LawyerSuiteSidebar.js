@@ -120,6 +120,10 @@ const LawyerSuiteSidebar = ({ isOpen, setIsOpen }) => {
               <span className="material-symbols-outlined" data-icon="event">event</span>
               <span>Appointments</span>
             </NavLink>
+            <NavLink to="/lawyer-suite/booking-history" className={navLinkClass} onClick={() => setIsOpen(false)}>
+              <span className="material-symbols-outlined" data-icon="history">history</span>
+              <span>Booking History</span>
+            </NavLink>
             <NavLink to="/lawyer-suite/contracts" className={navLinkClass} onClick={() => setIsOpen(false)}>
               <span className="material-symbols-outlined" data-icon="description">description</span>
               <span>Contracts</span>

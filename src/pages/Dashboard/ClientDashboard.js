@@ -6,6 +6,7 @@ import { supabase } from '../../services/supabase';
 import { realtimeSync } from '../../services/realtimeSync.service';
 import { getSignedDocumentUrl } from '../../services/storage.service';
 import { SkeletonDashboard } from '../../components/Skeleton/Skeleton';
+import { APPOINTMENT_STATUS } from '../../constants/appointmentStatus';
 
 const ClientDashboard = ({ inline = false }) => {
   const navigate = useNavigate();
@@ -230,7 +231,7 @@ const ClientDashboard = ({ inline = false }) => {
 
       // Fix 3: Derive notification count from pending/upcoming appointments
       const pendingOrUpcoming = (aptsData || []).filter(
-        a => a.status === 'Pending' || a.status === 'Upcoming' || a.status === 'pending_negotiation'
+        a => a.status === APPOINTMENT_STATUS.PENDING || a.status === APPOINTMENT_STATUS.CONFIRMED || a.status === APPOINTMENT_STATUS.PENDING_NEGOTIATION
       ).length;
       setNotificationCount(pendingOrUpcoming);
 
@@ -256,39 +257,28 @@ const ClientDashboard = ({ inline = false }) => {
     }
   };
 
-  const handleCancelAppointment = async (id) => {
+  const handleCancelAppointment = async (id, aptScheduledAt) => {
+    const hoursUntil = aptScheduledAt ? (new Date(aptScheduledAt) - Date.now()) / 3600000 : 0;
+    const pct = hoursUntil > 24 ? 100 : hoursUntil >= 2 ? 50 : 0;
+    if (!window.confirm(`Cancel this consultation? Based on the cancellation-timing policy, you'll receive a ${pct}% refund.`)) return;
     try {
-      const { error: rpcErr } = await supabase.rpc('fn_consultation_action', {
-        p_appointment_id: id,
-        p_action: 'Cancelled',
-        p_custom_data: { message: 'Client cancelled consultation appointment.' }
-      });
-      if (rpcErr) {
-        const { error } = await supabase.from('appointments').update({ status: 'cancelled' }).eq('id', id);
-        if (error) throw error;
-      }
-      toast.success('Appointment cancelled');
+      const { data, error } = await supabase.rpc('fn_cancel_appointment', { p_appointment_id: id });
+      if (error) throw error;
+      toast.success(`Appointment cancelled. Refund: ${data?.refund_percentage ?? pct}%.`);
       realtimeSync.broadcastCaseChange({ appointmentId: id, action: 'APPOINTMENT_CANCELLED' });
       fetchDashboardData();
     } catch (err) {
-      toast.error('Failed to cancel appointment');
+      toast.error(err.message || 'Failed to cancel appointment');
     }
   };
 
   const handleAcceptLawyerOffer = async (apt) => {
     try {
-      const agreedFee = apt.proposed_fee_lawyer || apt.fee_amount || 3000;
-      const { error: rpcErr } = await supabase.rpc('fn_consultation_action', {
-        p_appointment_id: apt.id,
-        p_action: 'Confirmed',
-        p_custom_data: {
-          agreed_fee: agreedFee,
-          fee_amount: agreedFee,
-          fee_locked: true,
-          message: 'Client accepted lawyer fee proposal.'
-        }
+      const { data, error: rpcErr } = await supabase.rpc('fn_negotiate_fee', {
+        p_appointment_id: apt.id, p_action: 'accept'
       });
       if (rpcErr) {
+        const agreedFee = apt.proposed_fee_lawyer || apt.fee_amount || 3000;
         const { error } = await supabase.from('appointments').update({
           status: 'confirmed',
           agreed_fee: agreedFee,
@@ -297,11 +287,11 @@ const ClientDashboard = ({ inline = false }) => {
         }).eq('id', apt.id);
         if (error) throw error;
       }
-      toast.success(`Accepted lawyer fee at BDT ${agreedFee}! Consultation confirmed.`);
+      toast.success(`Accepted lawyer fee at BDT ${data?.agreed_fee ?? apt.proposed_fee_lawyer ?? apt.fee_amount}! Consultation confirmed.`);
       realtimeSync.broadcastCaseChange({ appointmentId: apt.id, action: 'APPOINTMENT_CONFIRMED' });
       fetchDashboardData();
     } catch (err) {
-      toast.error('Failed to accept fee proposal');
+      toast.error(err.message || 'Failed to accept fee proposal');
     }
   };
 
@@ -449,7 +439,7 @@ const ClientDashboard = ({ inline = false }) => {
   }
 
   const activeCases = cases.filter(c => c.status === 'Active');
-  const upcomingAppointments = appointments.filter(apt => apt.status === 'Upcoming' || apt.status === 'Pending' || apt.status === 'In Progress').slice(0, 4);
+  const upcomingAppointments = appointments.filter(apt => apt.status === APPOINTMENT_STATUS.CONFIRMED || apt.status === APPOINTMENT_STATUS.PENDING).slice(0, 4);
   const totalAppointmentsCount = appointments.length;
 
   const userProfilePic = profilePic || `https://ui-avatars.com/api/?name=${encodeURIComponent(basicInfo.name || 'Client')}&background=041635&color=fff`;
@@ -508,15 +498,15 @@ const ClientDashboard = ({ inline = false }) => {
               ) : (
                 upcomingAppointments.map(apt => (
                   <div key={apt.id} className="bg-white rounded-lg border border-[#D0D7E3] shadow-sm p-6 hover:shadow-md hover:-translate-y-0.5 flex flex-col md:flex-row items-center gap-6 transition-all">
-                    <div className={`rounded-lg p-3 w-20 flex flex-col items-center justify-center shrink-0 ${apt.status === 'Upcoming' || apt.status === 'In Progress' ? 'bg-[#041635] text-white' : 'bg-[#ffe08f] text-[#241a00]'}`}>
+                    <div className={`rounded-lg p-3 w-20 flex flex-col items-center justify-center shrink-0 ${apt.status === APPOINTMENT_STATUS.CONFIRMED ? 'bg-[#041635] text-white' : 'bg-[#ffe08f] text-[#241a00]'}`}>
                       <span className="text-[10px] font-bold uppercase tracking-widest opacity-80">{new Date(apt.scheduled_at).toLocaleString('default', { month: 'short' })}</span>
                       <span className="text-2xl font-bold">{new Date(apt.scheduled_at).getDate()}</span>
                     </div>
                     <div className="flex-1">
                       <div className="flex flex-wrap items-center gap-2 mb-1">
                         <h4 className="text-lg font-bold text-[#041635]">{apt.consultation_type || 'Consultation'}</h4>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-tighter ${apt.status === 'In Progress' ? 'bg-blue-100 text-blue-800 animate-pulse' : apt.status === 'Upcoming' ? 'bg-[#e6f4ea] text-[#1e8e3e]' : 'bg-[#fff8e1] text-[#f57f17]'}`}>
-                          {apt.status === 'In Progress' ? 'Session In Progress' : apt.status}
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-tighter ${apt.status === APPOINTMENT_STATUS.CONFIRMED ? 'bg-[#e6f4ea] text-[#1e8e3e]' : 'bg-[#fff8e1] text-[#f57f17]'}`}>
+                          {apt.status}
                         </span>
                         {apt.medium && (
                           <span className="text-[10px] bg-indigo-50 border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded-full font-bold uppercase">
@@ -526,7 +516,7 @@ const ClientDashboard = ({ inline = false }) => {
                       </div>
                       <p className="text-gray-500 text-sm mb-3">With <span className="font-bold text-[#041635]">{apt.lawyer?.name || 'Assigned Lawyer'}</span></p>
                       <div className="flex flex-wrap gap-2">
-                        {(apt.status === 'Upcoming' || apt.status === 'In Progress') && (
+                        {apt.status === APPOINTMENT_STATUS.CONFIRMED && (
                           <>
                             {(!apt.medium || apt.medium === 'video_call') && (
                               <button onClick={() => handleJoinSession(apt)} className="bg-[#041635] text-white px-4 py-1.5 rounded text-xs font-bold hover:bg-[#1B2B4B] transition-colors flex items-center gap-1">
@@ -550,14 +540,14 @@ const ClientDashboard = ({ inline = false }) => {
                             )}
                           </>
                         )}
-                        {apt.status === 'Pending' && <button className="border border-[#041635] text-[#041635] px-4 py-1.5 rounded text-xs font-bold hover:bg-gray-50 transition-colors">Confirm</button>}
+                        {apt.status === APPOINTMENT_STATUS.PENDING && <button className="border border-[#041635] text-[#041635] px-4 py-1.5 rounded text-xs font-bold hover:bg-gray-50 transition-colors">Confirm</button>}
                       </div>
                     </div>
                     <div className="flex flex-col gap-2">
                       <button onClick={() => navigate(`/client/portal/messages?lawyerId=${apt.lawyer_id}`)} className="p-2 text-gray-400 hover:text-[#041635] hover:bg-gray-100 transition-colors rounded-full" title="Message Lawyer">
                         <span className="material-symbols-outlined">forum</span>
                       </button>
-                      <button onClick={() => handleCancelAppointment(apt.id)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors rounded-full" title="Cancel Appointment">
+                      <button onClick={() => handleCancelAppointment(apt.id, apt.scheduled_at)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors rounded-full" title="Cancel Appointment">
                         <span className="material-symbols-outlined">cancel</span>
                       </button>
                     </div>
@@ -811,7 +801,7 @@ const ClientDashboard = ({ inline = false }) => {
             return (
               <div key={apt.id} className="bg-white rounded-lg border border-[#D0D7E3] shadow-sm p-6 flex flex-col md:flex-row items-center justify-between gap-6">
                 <div className="flex items-center gap-6 flex-1">
-                  <div className={`rounded-lg p-3 w-20 flex flex-col items-center justify-center shrink-0 ${apt.status === 'Upcoming' || apt.status === 'pending' || apt.status === 'confirmed' ? 'bg-[#041635] text-white' : apt.status === 'pending_negotiation' ? 'bg-[#0369a1] text-white' : 'bg-gray-100 text-gray-700'}`}>
+                  <div className={`rounded-lg p-3 w-20 flex flex-col items-center justify-center shrink-0 ${apt.status === APPOINTMENT_STATUS.PENDING || apt.status === APPOINTMENT_STATUS.CONFIRMED ? 'bg-[#041635] text-white' : apt.status === APPOINTMENT_STATUS.PENDING_NEGOTIATION ? 'bg-[#0369a1] text-white' : 'bg-gray-100 text-gray-700'}`}>
                     <span className="text-[10px] font-bold uppercase tracking-widest opacity-80">{aptDate.toLocaleString('default', { month: 'short' })}</span>
                     <span className="text-2xl font-bold">{aptDate.getDate()}</span>
                   </div>
@@ -838,13 +828,13 @@ const ClientDashboard = ({ inline = false }) => {
                     Accept BDT {apt.proposed_fee_lawyer}
                   </button>
                 )}
-                {(apt.status === 'Upcoming' || apt.status === 'confirmed' || apt.status === 'In Progress') && (
+                {apt.status === APPOINTMENT_STATUS.CONFIRMED && (
                   <button onClick={() => handleJoinSession(apt)} className="bg-[#041635] text-white px-5 py-2 rounded-lg text-xs font-bold hover:bg-[#1B2B4B] transition-colors flex items-center gap-1">
                     <span className="material-symbols-outlined text-sm">videocam</span> Join Video
                   </button>
                 )}
-                {apt.status !== 'cancelled' && (
-                  <button onClick={() => handleCancelAppointment(apt.id)} className="border border-red-500 text-red-600 px-4 py-2 rounded-lg text-xs font-bold hover:bg-red-50 transition-colors">
+                {apt.status !== APPOINTMENT_STATUS.CANCELLED && (
+                  <button onClick={() => handleCancelAppointment(apt.id, apt.scheduled_at || apt.scheduled_time)} className="border border-red-500 text-red-600 px-4 py-2 rounded-lg text-xs font-bold hover:bg-red-50 transition-colors">
                     Cancel
                   </button>
                 )}

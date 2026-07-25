@@ -187,9 +187,20 @@ const AdminOverview = () => {
             let usersData = []; try { const r = await supabase.from('users').select('id, name, email').in('id', lawyerIds); usersData = r.data || []; } catch (e) {}
             usersData.forEach(u => { userMap[u.id] = u; });
           }
+          let commMap = {};
+          try {
+            const { data: ctData } = await supabase
+              .from('commission_transactions')
+              .select('lawyer_id, commission_amount')
+              .in('lawyer_id', lawyerIds);
+            (ctData || []).forEach(row => {
+              commMap[row.lawyer_id] = (commMap[row.lawyer_id] || 0) + Number(row.commission_amount || 0);
+            });
+          } catch (e) {}
           lPayouts = pData.map(item => ({
             ...item,
-            lawyer: userMap[item.lawyer_id] || { name: 'Verified Lawyer', email: '' }
+            lawyer: userMap[item.lawyer_id] || { name: 'Verified Lawyer', email: '' },
+            commission_total: commMap[item.lawyer_id] || 0
           }));
         } else {
           // Fallback: if lawyer_payouts table is empty, show top verified lawyers
@@ -592,14 +603,17 @@ const AdminOverview = () => {
                 <th className="px-5 py-3 font-semibold">Lawyer</th>
                 <th className="px-5 py-3 font-semibold">Total Earned (Net)</th>
                 <th className="px-5 py-3 font-semibold">Pending Payout</th>
-                <th className="px-5 py-3 font-semibold">Estimated Platform Rev ({commissionRate}%)</th>
+                <th className="px-5 py-3 font-semibold">Platform Revenue (Actual)</th>
               </tr>
             </thead>
             <tbody>
               {lawyerBreakdown.map((item) => {
                 const earned = Number(item.total_earned || 0);
                 const pending = Number(item.pending_payout || 0);
-                const estRev = earned > 0 ? (earned / (1 - (commissionRate / 100))) * (commissionRate / 100) : 0;
+                // Actual sum of commission_transactions.commission_amount for this
+                // lawyer — not a reverse-math estimate, which drifted whenever the
+                // commission rate changed or a refund adjusted the net total.
+                const estRev = Number(item.commission_total || 0);
                 return (
                   <tr key={item.lawyer_id} className="border-b border-border-subtle/50 hover:bg-bg-light/50 transition-colors">
                     <td className="px-5 py-4">

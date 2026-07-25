@@ -4,6 +4,7 @@ import { supabase } from '../../services/supabase';
 import { useAuth } from '../../context/AuthContext';
 import toast from 'react-hot-toast';
 import { realtimeSync } from '../../services/realtimeSync.service';
+import { APPOINTMENT_STATUS } from '../../constants/appointmentStatus';
 
 const LawyerAppointmentsView = () => {
   const { user } = useAuth();
@@ -20,6 +21,10 @@ const LawyerAppointmentsView = () => {
   const [counterModalOpen, setCounterModalOpen] = useState(false);
   const [counterAmount, setCounterAmount] = useState('');
   const [counterNote, setCounterNote] = useState('');
+
+  // Reschedule State
+  const [rescheduleModalOpen, setRescheduleModalOpen] = useState(false);
+  const [rescheduleSlot, setRescheduleSlot] = useState('');
 
   useEffect(() => {
     if (!user) return;
@@ -166,7 +171,7 @@ const LawyerAppointmentsView = () => {
         console.warn('[LawyerAppointmentsView] fn_consultation_action failed, falling back to direct update:', rpcErr.message);
         const { error } = await supabase
           .from('appointments')
-          .update({ status: newStatus })
+          .update({ status: finalType === 'started' ? 'confirmed' : finalType })
           .eq('id', id);
         if (error) throw error;
 
@@ -223,19 +228,26 @@ const LawyerAppointmentsView = () => {
 
   const handleAcceptNegotiation = async (apt) => {
     try {
-      const agreedFee = apt.proposed_fee_client || apt.fee_amount || 3000;
-      const { error } = await supabase.from('appointments').update({
-        status: 'confirmed',
-        agreed_fee: agreedFee,
-        fee_amount: agreedFee,
-        fee_locked: true
-      }).eq('id', apt.id);
+      const { data, error } = await supabase.rpc('fn_negotiate_fee', {
+        p_appointment_id: apt.id, p_action: 'accept'
+      });
       if (error) throw error;
-      toast.success(`Fee accepted at BDT ${agreedFee}! Consultation confirmed.`);
+      toast.success(`Fee accepted at BDT ${data?.agreed_fee ?? apt.fee_amount}! Consultation confirmed.`);
       fetchAppointments();
     } catch (err) {
       console.error('Error accepting fee:', err);
-      toast.error('Failed to accept fee proposal');
+      toast.error(err.message || 'Failed to accept fee proposal');
+    }
+  };
+
+  const handleDeclineNegotiation = async (apt) => {
+    try {
+      const { error } = await supabase.rpc('fn_negotiate_fee', { p_appointment_id: apt.id, p_action: 'decline' });
+      if (error) throw error;
+      toast.success('Fee proposal declined.');
+      fetchAppointments();
+    } catch (err) {
+      toast.error(err.message || 'Failed to decline');
     }
   };
 
@@ -244,40 +256,83 @@ const LawyerAppointmentsView = () => {
     if (!selectedApt || !counterAmount) return;
     try {
       const numAmt = Number(counterAmount);
-      const round = (selectedApt.negotiation_round || 1) + 1;
-      const history = Array.isArray(selectedApt.negotiation_history) ? [...selectedApt.negotiation_history] : [];
-      history.push({
-        proposed_by: 'lawyer',
-        amount: numAmt,
-        note: counterNote,
-        timestamp: new Date().toISOString()
+      const { data, error } = await supabase.rpc('fn_negotiate_fee', {
+        p_appointment_id: selectedApt.id, p_action: 'counter', p_fee: numAmt, p_note: counterNote
       });
-      const { error } = await supabase.from('appointments').update({
-        status: 'pending_negotiation',
-        proposed_fee_lawyer: numAmt,
-        fee_amount: numAmt,
-        negotiation_note: counterNote,
-        negotiation_round: round,
-        negotiation_history: history
-      }).eq('id', selectedApt.id);
       if (error) throw error;
-      toast.success(`Counter offer of BDT ${numAmt} sent to client!`);
+      if (data?.auto_declined) {
+        toast.error('Negotiation exceeded 3 rounds and was automatically declined.');
+      } else {
+        toast.success(`Counter offer of BDT ${numAmt} sent (round ${data?.round}/3)!`);
+      }
       setCounterModalOpen(false);
       fetchAppointments();
     } catch (err) {
       console.error('Error sending counter:', err);
-      toast.error('Failed to send counter offer');
+      toast.error(err.message || 'Failed to send counter offer');
+    }
+  };
+
+  const handleCancelAppointment = async (apt) => {
+    const hoursUntil = (new Date(apt.scheduled_at || apt.scheduled_time) - Date.now()) / 3600000;
+    const pct = hoursUntil > 24 ? 100 : hoursUntil >= 2 ? 50 : 0;
+    if (!window.confirm(`Cancel this consultation? The client will receive a ${pct}% refund based on the cancellation-timing policy.`)) return;
+    try {
+      const { data, error } = await supabase.rpc('fn_cancel_appointment', { p_appointment_id: apt.id });
+      if (error) throw error;
+      toast.success(`Cancelled. Client refund: ${data?.refund_percentage ?? pct}%.`);
+      fetchAppointments();
+    } catch (err) {
+      toast.error(err.message || 'Failed to cancel appointment');
+    }
+  };
+
+  const handleProposeRescheduleSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedApt || !rescheduleSlot) return;
+    try {
+      const { error } = await supabase.rpc('fn_propose_reschedule', {
+        p_appointment_id: selectedApt.id, p_new_slot: new Date(rescheduleSlot).toISOString()
+      });
+      if (error) throw error;
+      toast.success('Reschedule proposed! Waiting for client response (24h).');
+      setRescheduleModalOpen(false);
+      fetchAppointments();
+    } catch (err) {
+      toast.error(err.message || 'Failed to propose reschedule');
+    }
+  };
+
+  const handleRespondReschedule = async (apt, accept) => {
+    try {
+      const { error } = await supabase.rpc('fn_respond_reschedule', { p_appointment_id: apt.id, p_accept: accept });
+      if (error) throw error;
+      toast.success(accept ? 'Reschedule accepted.' : 'Reschedule declined; original time stands.');
+      fetchAppointments();
+    } catch (err) {
+      toast.error(err.message || 'Failed to respond to reschedule');
+    }
+  };
+
+  const handleCompleteConsultation = async (apt) => {
+    try {
+      const { error } = await supabase.rpc('fn_complete_consultation', { p_appointment_id: apt.id });
+      if (error) throw error;
+      toast.success('Consultation marked complete.');
+      fetchAppointments();
+    } catch (err) {
+      toast.error(err.message || 'Failed to mark complete');
     }
   };
 
   const filterAppointments = (tab) => {
     return appointments.filter(app => {
       const status = (app.status || '').toLowerCase();
-      if (tab === 'upcoming') return status === 'upcoming' || status === 'confirmed';
+      if (tab === 'upcoming') return status === 'confirmed' || status === APPOINTMENT_STATUS.RESCHEDULE_PROPOSED;
       if (tab === 'pending') return status === 'pending';
       if (tab === 'negotiation') return status === 'pending_negotiation';
-      if (tab === 'completed') return status === 'completed';
-      if (tab === 'cancelled') return status === 'cancelled';
+      if (tab === 'completed') return status === 'completed' || status === APPOINTMENT_STATUS.HISTORY;
+      if (tab === 'cancelled') return status === 'cancelled' || status === 'no_show';
       return false;
     });
   };
@@ -426,7 +481,7 @@ const LawyerAppointmentsView = () => {
                     <div className="bg-[#f8fafc] p-3 rounded-lg border border-[#e2e8f0] mb-3 text-left">
                       <div className="flex justify-between items-center mb-1 text-xs font-bold text-[#0F2A5E]">
                         <span>Client Proposed Fee: BDT {Number(apt.proposed_fee_client || apt.fee_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-                        <span>Round #{apt.negotiation_round || 1} of 2</span>
+                        <span>Round #{apt.negotiation_round || 1} of 3</span>
                       </div>
                       {apt.negotiation_note && (
                         <p className="text-xs text-gray-600 italic bg-white p-2 rounded border border-gray-200 mt-1">
@@ -445,16 +500,16 @@ const LawyerAppointmentsView = () => {
                         >
                           <span className="material-symbols-outlined text-[14px]">check</span> Accept Fee & Confirm
                         </button>
-                        {(apt.negotiation_round || 1) < 2 && (
-                          <button 
+                        {(apt.negotiation_round || 1) < 3 && (
+                          <button
                             onClick={() => { setSelectedApt(apt); setCounterAmount(apt.fee_amount || ''); setCounterNote(''); setCounterModalOpen(true); }}
                             className="bg-[#041635] text-white px-4 py-1.5 rounded text-xs font-bold hover:bg-[#1B2B4B] transition-colors"
                           >
                             Counter Offer
                           </button>
                         )}
-                        <button 
-                          onClick={() => handleUpdateStatus(apt.id, 'Cancelled', 'cancelled')}
+                        <button
+                          onClick={() => handleDeclineNegotiation(apt)}
                           className="border border-red-500 text-red-600 px-4 py-1.5 rounded text-xs font-bold hover:bg-red-50 transition-colors"
                         >
                           Decline
@@ -477,7 +532,7 @@ const LawyerAppointmentsView = () => {
                         </button>
                       </>
                     )}
-                    {isUpcoming && (
+                    {isUpcoming && apt.status !== APPOINTMENT_STATUS.RESCHEDULE_PROPOSED && (
                       <>
                         {(!apt.medium || apt.medium === 'video_call') && (
                           <button onClick={() => handleJoinMeeting(apt)} className="bg-[#041635] text-white px-4 py-1.5 rounded text-xs font-bold hover:bg-[#1B2B4B] transition-colors flex items-center gap-1">
@@ -499,25 +554,48 @@ const LawyerAppointmentsView = () => {
                             🏢 Office Address Consultation
                           </span>
                         )}
-                        <button 
+                        <button
                           onClick={() => handleUpdateStatus(apt.id, 'In Progress', 'started')}
                           className="bg-blue-600 text-white px-3 py-1.5 rounded text-xs font-bold hover:bg-blue-700 transition-colors"
                         >
                           Mark Started
                         </button>
-                        <button 
-                          onClick={() => handleUpdateStatus(apt.id, 'Completed', 'completed')}
-                          className="border border-[#041635] text-[#041635] px-3 py-1.5 rounded text-xs font-bold hover:bg-gray-50 transition-colors"
+                        <button
+                          onClick={() => handleCompleteConsultation(apt)}
+                          disabled={new Date(apt.scheduled_at || apt.scheduled_time).getTime() + (apt.duration_minutes || 60) * 60000 > Date.now()}
+                          title="Enabled once the scheduled session time has passed"
+                          className="border border-[#041635] text-[#041635] px-3 py-1.5 rounded text-xs font-bold hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         >
-                          Completed
+                          Mark Completed
                         </button>
-                        <button 
+                        <button
+                          onClick={() => { setSelectedApt(apt); setRescheduleSlot(''); setRescheduleModalOpen(true); }}
+                          className="border border-blue-500 text-blue-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-blue-50 transition-colors"
+                        >
+                          Reschedule
+                        </button>
+                        <button
+                          onClick={() => handleCancelAppointment(apt)}
+                          className="border border-red-500 text-red-600 px-3 py-1.5 rounded text-xs font-bold hover:bg-red-50 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
                           onClick={() => handleUpdateStatus(apt.id, 'Cancelled', 'no_show', 'Consultation marked as No-Show by lawyer.')}
                           className="border border-amber-500 text-amber-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-amber-50 transition-colors"
                         >
                           No-Show
                         </button>
                       </>
+                    )}
+                    {apt.status === APPOINTMENT_STATUS.RESCHEDULE_PROPOSED && (
+                      <div className="w-full bg-blue-50 border border-blue-200 rounded-lg p-3 text-left">
+                        <p className="text-xs font-bold text-blue-800 mb-2">A reschedule is pending a response (auto-reverts in 24h if unanswered).</p>
+                        <div className="flex gap-2">
+                          <button onClick={() => handleRespondReschedule(apt, true)} className="bg-blue-600 text-white px-3 py-1.5 rounded text-xs font-bold hover:bg-blue-700">Accept New Time</button>
+                          <button onClick={() => handleRespondReschedule(apt, false)} className="border border-gray-400 text-gray-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-gray-50">Keep Original Time</button>
+                        </div>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -588,7 +666,7 @@ const LawyerAppointmentsView = () => {
               Send Fee Counter Offer
             </h3>
             <p className="text-sm text-gray-600">
-              Propose a different consultation fee to {selectedApt?.client?.name}. You can submit up to 2 rounds of negotiation.
+              Propose a different consultation fee to {selectedApt?.client?.name}. You can submit up to 3 rounds of negotiation.
             </p>
             <form onSubmit={handleCounterOfferSubmit} className="space-y-4">
               <div>
@@ -626,6 +704,47 @@ const LawyerAppointmentsView = () => {
                   className="px-5 py-2 bg-[#041635] text-white rounded-lg text-xs font-bold hover:bg-[#1B2B4B] shadow-sm"
                 >
                   Send Counter Offer
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {rescheduleModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4 animate-fadeIn">
+            <h3 className="font-serif text-xl font-bold text-[#041635] flex items-center gap-2">
+              <span className="material-symbols-outlined text-secondary">event_repeat</span>
+              Propose New Time
+            </h3>
+            <p className="text-sm text-gray-600">
+              Propose a new time for this consultation with {selectedApt?.client?.name}. The client has 24 hours to respond, or it automatically reverts to the original time.
+            </p>
+            <form onSubmit={handleProposeRescheduleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1">New Date & Time</label>
+                <input
+                  type="datetime-local"
+                  required
+                  value={rescheduleSlot}
+                  onChange={(e) => setRescheduleSlot(e.target.value)}
+                  className="w-full px-3.5 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-[#041635]"
+                />
+              </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setRescheduleModalOpen(false)}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-xs font-bold text-gray-600 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-[#041635] text-white rounded-lg text-xs font-bold hover:bg-[#1B2B4B] shadow-sm"
+                >
+                  Propose Reschedule
                 </button>
               </div>
             </form>

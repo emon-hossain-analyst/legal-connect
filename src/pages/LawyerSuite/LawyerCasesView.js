@@ -5,6 +5,7 @@ import { supabase } from '../../services/supabase';
 import { realtimeSync } from '../../services/realtimeSync.service';
 import { getSignedDocumentUrl } from '../../services/storage.service';
 import toast from 'react-hot-toast';
+import { CONTRACT_STATUS } from '../../constants/contractStatus';
 
 // Reusable Components
 import CaseSummaryCards from '../../components/LawyerCaseTracking/CaseSummaryCards';
@@ -68,6 +69,8 @@ const LawyerCasesView = () => {
   const [progressTitle, setProgressTitle] = useState('');
   const [progressNote, setProgressNote] = useState('');
   const [reviewNote, setReviewNote] = useState('');
+  const [reviewTitle, setReviewTitle] = useState('');
+  const [deliverableFile, setDeliverableFile] = useState(null);
   const [submittingContractAction, setSubmittingContractAction] = useState(false);
   const [contractTimeline, setContractTimeline] = useState([]);
 
@@ -629,21 +632,40 @@ const LawyerCasesView = () => {
     finally { setSubmittingContractAction(false); }
   };
 
-  const handleMarkReadyForReview = async (contractId) => {
+  const handleSubmitDeliverable = async (contractId) => {
     const targetId = contractId || selectedCase?.contract?.id;
     if (!targetId) {
       toast.error('Contract ID not found for delivery submission.');
       return;
     }
+    if (!deliverableFile && !reviewTitle.trim()) {
+      toast.error('Attach a file or enter a deliverable title.');
+      return;
+    }
     setSubmittingContractAction(true);
     try {
-      const { error } = await supabase.rpc('fn_mark_ready_for_review', {
+      let fileUrl = null;
+      let fileType = null;
+      if (deliverableFile) {
+        const fileName = `case_${selectedCase.id}/${Date.now()}_${deliverableFile.name}`;
+        const { error: storageErr } = await supabase.storage.from('case-documents').upload(fileName, deliverableFile);
+        if (storageErr) throw storageErr;
+        const { data: publicUrlData } = supabase.storage.from('case-documents').getPublicUrl(fileName);
+        fileUrl = publicUrlData?.publicUrl || null;
+        fileType = deliverableFile.name.split('.').pop();
+      }
+
+      const { error } = await supabase.rpc('fn_submit_deliverable', {
         p_contract_id: targetId,
-        p_note: reviewNote.trim() || null,
+        p_title: reviewTitle.trim() || deliverableFile?.name || 'Deliverable',
+        p_description: reviewNote.trim() || null,
+        p_file_url: fileUrl,
+        p_file_type: fileType,
+        p_is_final: false,
       });
       if (error) throw error;
-      toast.success('Work submitted for client review!');
-      setReviewNote(''); setContractAction(null);
+      toast.success('Deliverable submitted for client review!');
+      setReviewNote(''); setReviewTitle(''); setDeliverableFile(null); setContractAction(null);
       fetchCasesData(); fetchContractTimeline(targetId);
       realtimeSync.broadcastCaseChange({ action: 'DELIVERY_SUBMITTED', contractId: targetId, caseId: selectedCase?.id });
     } catch (err) { toast.error(`Failed: ${err.message}`); }
@@ -1172,7 +1194,7 @@ const LawyerCasesView = () => {
                       </h4>
 
                       {/* Accept Contract */}
-                      {['Pending Review', 'PENDING_CONTRACT', 'Draft', 'Pending_Signature'].includes(selectedCase.contract.status) && (
+                      {[CONTRACT_STATUS.PENDING_ACCEPTANCE, CONTRACT_STATUS.DRAFT].includes(selectedCase.contract.status) && (
                         <button
                           onClick={() => handleLawyerAcceptContract(selectedCase.contract.id)}
                           disabled={submittingContractAction}
@@ -1183,8 +1205,21 @@ const LawyerCasesView = () => {
                         </button>
                       )}
 
+                      {/* Revision requested by client: prominent resubmit banner */}
+                      {selectedCase.contract.status === CONTRACT_STATUS.REVISION_REQUESTED && (
+                        <div className="p-3 rounded-xl bg-amber-50 border border-amber-300">
+                          <p className="text-xs font-bold text-amber-800 flex items-center gap-1">
+                            <span className="material-symbols-outlined text-sm">history</span>
+                            Client requested a revision {selectedCase.contract.revision_count ? `(${selectedCase.contract.revision_count}/${selectedCase.contract.max_revisions || 3})` : ''}
+                          </p>
+                          {selectedCase.contract.change_request_note && (
+                            <p className="text-xs text-amber-700 mt-1">{selectedCase.contract.change_request_note}</p>
+                          )}
+                        </div>
+                      )}
+
                       {/* Progress Update & Delivery Submission */}
-                      {['Active', 'ACTIVE', 'active', 'Signed', 'SIGNED', 'in_progress', 'in progress', 'REVISION_REQUESTED', 'Revision Requested', 'ongoing'].includes(String(selectedCase.contract.status || selectedCase.status)) && (
+                      {[CONTRACT_STATUS.ACTIVE, CONTRACT_STATUS.ACCEPTED, CONTRACT_STATUS.MILESTONE_IN_PROGRESS, CONTRACT_STATUS.MILESTONE_COMPLETED, CONTRACT_STATUS.REVISION_REQUESTED].includes(selectedCase.contract.status) && (
                         <>
                           {contractAction === 'progress' ? (
                             <form onSubmit={handleAddProgressUpdate} className="space-y-3">
@@ -1213,17 +1248,26 @@ const LawyerCasesView = () => {
                             </form>
                           ) : contractAction === 'ready' ? (
                             <div className="space-y-3">
+                              <input
+                                type="text" value={reviewTitle} onChange={e => setReviewTitle(e.target.value)}
+                                placeholder="Deliverable title *"
+                                className="w-full px-3 py-2 border border-border-subtle rounded-xl text-xs focus:outline-none focus:border-navy-primary"
+                              />
                               <textarea
                                 value={reviewNote} onChange={e => setReviewNote(e.target.value)}
                                 placeholder="Note to client about deliverables (optional)"
                                 rows={2}
                                 className="w-full px-3 py-2 border border-border-subtle rounded-xl text-xs focus:outline-none focus:border-navy-primary resize-none"
                               />
+                              <input
+                                type="file" onChange={e => setDeliverableFile(e.target.files?.[0] || null)}
+                                className="w-full text-xs"
+                              />
                               <div className="flex gap-2">
-                                <button onClick={() => handleMarkReadyForReview(selectedCase.contract.id)}
+                                <button onClick={() => handleSubmitDeliverable(selectedCase.contract.id)}
                                   disabled={submittingContractAction}
                                   className="flex-1 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold disabled:opacity-50">
-                                  {submittingContractAction ? 'Submitting...' : 'Submit for Client Review'}
+                                  {submittingContractAction ? 'Submitting...' : (selectedCase.contract.status === CONTRACT_STATUS.REVISION_REQUESTED ? 'Resubmit for Client Review' : 'Submit for Client Review')}
                                 </button>
                                 <button onClick={() => setContractAction(null)}
                                   className="px-4 py-2 border border-border-subtle rounded-xl text-xs font-bold text-gray-600">
@@ -1238,8 +1282,9 @@ const LawyerCasesView = () => {
                                 <span className="material-symbols-outlined text-sm">update</span> Add Progress Update
                               </button>
                               <button onClick={() => setContractAction('ready')}
-                                className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1">
-                                <span className="material-symbols-outlined text-sm">rate_review</span> Mark Ready for Review
+                                className={`flex-1 py-2.5 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 ${selectedCase.contract.status === CONTRACT_STATUS.REVISION_REQUESTED ? 'bg-amber-600 hover:bg-amber-700 animate-fadeIn' : 'bg-purple-600 hover:bg-purple-700'}`}>
+                                <span className="material-symbols-outlined text-sm">{selectedCase.contract.status === CONTRACT_STATUS.REVISION_REQUESTED ? 'replay' : 'rate_review'}</span>
+                                {selectedCase.contract.status === CONTRACT_STATUS.REVISION_REQUESTED ? 'Resubmit Work' : 'Submit Deliverable'}
                               </button>
                             </div>
                           )}

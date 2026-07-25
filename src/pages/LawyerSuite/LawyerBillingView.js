@@ -163,21 +163,30 @@ const LawyerBillingView = () => {
 
     setSubmittingWithdraw(true);
     try {
-      const payload = {
-        lawyer_id: user.id,
-        amount: Number(withdrawAmount),
-        status: 'pending',
-        bank_details: {
-          method: paymentMethod,
-          account_number: accountNumber,
-          bank_name: paymentMethod === 'Bank Transfer' ? bankName : undefined
-        },
-        notes: notes.trim() || undefined,
-        requested_at: new Date().toISOString()
+      const bankDetails = {
+        method: paymentMethod,
+        account_number: accountNumber,
+        bank_name: paymentMethod === 'Bank Transfer' ? bankName : undefined
       };
 
-      const { error: insertErr } = await supabase.from('payout_requests').insert([payload]);
-      if (insertErr) throw insertErr;
+      const { error: rpcErr } = await supabase.rpc('fn_request_payout', {
+        p_amount: Number(withdrawAmount),
+        p_bank_details: bankDetails,
+        p_notes: notes.trim() || null
+      });
+
+      if (rpcErr) {
+        // Backward compatibility if migration 77 hasn't been applied yet.
+        const { error: insertErr } = await supabase.from('payout_requests').insert([{
+          lawyer_id: user.id,
+          amount: Number(withdrawAmount),
+          status: 'pending',
+          bank_details: bankDetails,
+          notes: notes.trim() || undefined,
+          requested_at: new Date().toISOString()
+        }]);
+        if (insertErr) throw insertErr;
+      }
 
       toast.success('Payout request submitted successfully! Admin will process it within 24-48 hours.');
       setShowWithdrawModal(false);

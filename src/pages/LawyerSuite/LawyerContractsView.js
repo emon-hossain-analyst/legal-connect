@@ -3,6 +3,7 @@ import { supabase } from '../../services/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { realtimeSync } from '../../services/realtimeSync.service';
 import toast from 'react-hot-toast';
+import { CONTRACT_STATUS } from '../../constants/contractStatus';
 
 const LawyerContractsView = () => {
   const { user } = useAuth();
@@ -103,7 +104,7 @@ const LawyerContractsView = () => {
         if (rpcErr) {
           const { error } = await supabase
             .from('contracts')
-            .update({ status: 'Terminated', updated_at: new Date().toISOString() })
+            .update({ status: CONTRACT_STATUS.TERMINATED, updated_at: new Date().toISOString() })
             .eq('id', id);
           if (error) throw error;
         }
@@ -157,7 +158,7 @@ const LawyerContractsView = () => {
         payment_schedule: formData.payment_schedule,
         retainer_amount: numRet,
         outstanding_balance: numAmt,
-        status: 'Pending Review',
+        status: CONTRACT_STATUS.PENDING_ACCEPTANCE,
         fee_locked: false
       };
 
@@ -221,7 +222,7 @@ const LawyerContractsView = () => {
                   </div>
                 </div>
                 <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${
-                  contract.status === 'Active' ? 'bg-[#e6f4ea] text-[#1e8e3e]' : contract.status === 'Pending Review' ? 'bg-[#fff8e1] text-[#f57f17]' : 'bg-gray-100 text-gray-600'
+                  contract.status === CONTRACT_STATUS.ACTIVE ? 'bg-[#e6f4ea] text-[#1e8e3e]' : contract.status === CONTRACT_STATUS.PENDING_ACCEPTANCE ? 'bg-[#fff8e1] text-[#f57f17]' : 'bg-gray-100 text-gray-600'
                 }`}>
                   {contract.status}
                 </span>
@@ -248,10 +249,10 @@ const LawyerContractsView = () => {
               </div>
 
               <div className="mt-4 pt-4 border-t border-gray-100 flex justify-end items-center space-x-2">
-                {contract.status === 'Active' && (
+                {contract.status === CONTRACT_STATUS.ACTIVE && (
                   <button onClick={() => updateContractStatus(contract.id, 'terminate')} className="px-3 py-1.5 bg-red-100 text-red-700 text-xs font-bold rounded hover:bg-red-200 transition-colors">Terminate Contract</button>
                 )}
-                {['Pending Review', 'PENDING_CONTRACT', 'Draft', 'Pending_Signature'].includes(contract.status) && (
+                {[CONTRACT_STATUS.PENDING_ACCEPTANCE, CONTRACT_STATUS.DRAFT].includes(contract.status) && (
                   <button onClick={() => updateContractStatus(contract.id, 'accept')} className="px-3 py-1.5 bg-[#041635] text-white text-xs font-bold rounded hover:bg-[#1B2B4B] transition-colors">Accept Contract</button>
                 )}
               </div>

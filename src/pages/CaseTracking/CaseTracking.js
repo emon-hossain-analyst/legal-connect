@@ -6,6 +6,7 @@ import { realtimeSync } from '../../services/realtimeSync.service';
 import toast from 'react-hot-toast';
 import styles from './CaseTracking.module.css';
 import ReviewSubmissionModal from '../../components/LawyerCaseTracking/ReviewSubmissionModal';
+import { CONTRACT_STATUS } from '../../constants/contractStatus';
 
 const STATUS_COLORS = {
   open: '#10B981',              // Emerald
@@ -201,6 +202,16 @@ const CaseTracking = () => {
                 deliverablesMap[entry.contract_id].push(entry);
               });
             }
+            // Server-computed progress % (sql/74 v_contract_progress) — replaces
+            // the client-side arbitrary math below when available.
+            try {
+              const { data: progData } = await supabase.from('v_contract_progress').select('contract_id, pct').in('contract_id', cntIds);
+              if (progData) {
+                const progressByContract = {};
+                progData.forEach(p => { progressByContract[p.contract_id] = p.pct; });
+                cData.forEach(cnt => { cnt.progress_pct = progressByContract[cnt.id]; });
+              }
+            } catch (e) { /* view not deployed yet — falls back to client-side math */ }
           }
         }
       } catch (e) {
@@ -316,10 +327,12 @@ const CaseTracking = () => {
           const targetKey = cnt.case_id ? String(cnt.case_id) : (cnt.job_post_id ? String(cnt.job_post_id) : null);
           const cTimeline = contractTimelineMap[cnt.id] || [];
           const cDeliverables = deliverablesMap[cnt.id] || [];
-          let mappedStatus = cnt.status?.toLowerCase() === 'active' ? 'in_progress' : (cnt.status === 'Pending Review' ? 'pending_acceptance' : 'open');
-          if (cnt.status === 'UNDER_CLIENT_REVIEW' || cnt.status === 'Under Client Review') mappedStatus = 'under_review';
-          else if (cnt.status === 'REVISION_REQUESTED' || cnt.status === 'Revision Requested') mappedStatus = 'revision_requested';
-          else if (cnt.status === 'COMPLETED' || cnt.status === 'Completed') mappedStatus = 'completed';
+          let mappedStatus = 'open';
+          if ([CONTRACT_STATUS.ACTIVE, CONTRACT_STATUS.ACCEPTED, CONTRACT_STATUS.MILESTONE_IN_PROGRESS, CONTRACT_STATUS.MILESTONE_COMPLETED, CONTRACT_STATUS.DELIVERY_SUBMITTED].includes(cnt.status)) mappedStatus = 'in_progress';
+          else if (cnt.status === CONTRACT_STATUS.PENDING_ACCEPTANCE) mappedStatus = 'pending_acceptance';
+          else if (cnt.status === CONTRACT_STATUS.UNDER_CLIENT_REVIEW) mappedStatus = 'under_review';
+          else if (cnt.status === CONTRACT_STATUS.REVISION_REQUESTED) mappedStatus = 'revision_requested';
+          else if ([CONTRACT_STATUS.COMPLETED, CONTRACT_STATUS.REVIEW_PENDING, CONTRACT_STATUS.REVIEWED, CONTRACT_STATUS.CLOSED].includes(cnt.status)) mappedStatus = 'completed';
 
           if (targetKey && mergedMap.has(targetKey)) {
             const existing = mergedMap.get(targetKey);
@@ -327,8 +340,8 @@ const CaseTracking = () => {
             existing.agreed_fee = cnt.amount || cnt.agreed_amount || cnt.retainer_amount;
             existing.contract_timeline = cTimeline;
             existing.deliverables = cDeliverables;
-            if (cnt.status === 'Active' || cnt.status === 'Signed') existing.status = 'in_progress';
-            else if (cnt.status === 'Pending Review' && existing.status === 'open') existing.status = 'pending_acceptance';
+            if (mappedStatus === 'in_progress') existing.status = 'in_progress';
+            else if (mappedStatus === 'pending_acceptance' && existing.status === 'open') existing.status = 'pending_acceptance';
             else if (['under_review', 'revision_requested', 'completed'].includes(mappedStatus)) existing.status = mappedStatus;
           } else if (!targetKey) {
             const synthId = `contract_${cnt.id}`;
@@ -511,7 +524,7 @@ const CaseTracking = () => {
           console.warn('[CaseTracking] fn_approve_contract failed, falling back to direct update:', rpcErr.message);
           const { error } = await supabase
             .from('contracts')
-            .update({ status: 'Active', fee_locked: true })
+            .update({ status: CONTRACT_STATUS.ACTIVE, fee_locked: true })
             .eq('id', contractId);
           if (error) throw error;
         }
@@ -524,7 +537,7 @@ const CaseTracking = () => {
         if (rpcErr) {
           const { error } = await supabase
             .from('contracts')
-            .update({ status: 'Negotiation Requested' })
+            .update({ status: CONTRACT_STATUS.PENDING_ACCEPTANCE })
             .eq('id', contractId);
           if (error) throw error;
         }
@@ -537,14 +550,14 @@ const CaseTracking = () => {
         if (rpcErr) {
           const { error } = await supabase
             .from('contracts')
-            .update({ status: 'Terminated' })
+            .update({ status: CONTRACT_STATUS.TERMINATED })
             .eq('id', contractId);
           if (error) throw error;
         }
         toast.success('Contract declined / terminated.');
       }
 
-      const newStatus = action === 'accept' ? 'Active' : action === 'decline' ? 'Terminated' : 'Negotiation Requested';
+      const newStatus = action === 'accept' ? CONTRACT_STATUS.ACTIVE : action === 'decline' ? CONTRACT_STATUS.TERMINATED : CONTRACT_STATUS.PENDING_ACCEPTANCE;
       setContracts(prev => prev.map(c => c.id === contractId ? { ...c, status: newStatus } : c));
       realtimeSync.broadcastCaseChange({ contractId, action: `CONTRACT_${action.toUpperCase()}` });
       fetchDashboardData(true);
@@ -732,14 +745,14 @@ const CaseTracking = () => {
       </div>
 
       {/* --- Action Required: Pending Legal Contracts Banner --- */}
-      {contracts.filter(c => c.status === 'Pending Review').length > 0 && (
+      {contracts.filter(c => c.status === CONTRACT_STATUS.PENDING_ACCEPTANCE).length > 0 && (
         <div className={styles.actionBanner}>
           <div className={styles.actionBannerHeader}>
             <h2>⚡ Action Required: Legal Contracts Pending Review</h2>
             <span className={styles.pendingReviewBadge}>Signature / Retainer Due</span>
           </div>
           <div style={{ display: 'grid', gap: '14px' }}>
-            {contracts.filter(c => c.status === 'Pending Review').map(cnt => (
+            {contracts.filter(c => c.status === CONTRACT_STATUS.PENDING_ACCEPTANCE).map(cnt => (
               <div key={cnt.id} style={{ background: '#FFFFFF', border: '1px solid #FDE68A', borderRadius: '10px', padding: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
                   <div>
@@ -820,12 +833,16 @@ const CaseTracking = () => {
             const statusColor = STATUS_COLORS[item.status] || '#6B7280';
             const statusLabel = STATUS_LABELS[item.status] || item.status?.toUpperCase();
 
-            // Progress bar calculation
+            // Progress bar: server-computed via v_contract_progress when a
+            // linked contract has one; falls back to local milestone math for
+            // proposal-only / pre-contract items the view doesn't cover.
             const msList = item.milestones || [];
             const approvedCount = msList.filter(m => m.status === 'approved').length;
             const totalCount = msList.length > 0 ? msList.length : (item.status === 'completed' ? 4 : item.status === 'in_progress' ? 4 : 2);
             const completedCount = msList.length > 0 ? approvedCount : (item.status === 'completed' ? 4 : item.status === 'in_progress' ? 2 : item.proposal_count > 0 ? 1 : 0);
-            const progressPercent = Math.round((completedCount / totalCount) * 100);
+            const progressPercent = item.contract?.progress_pct != null
+              ? item.contract.progress_pct
+              : Math.round((completedCount / totalCount) * 100);
 
             const latestMilestone = msList.length > 0
               ? msList.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]
@@ -937,7 +954,7 @@ const CaseTracking = () => {
                         View Contract
                       </button>
                     )}
-                    {(item.contract || item.status === 'under_review' || item.status === 'revision_requested') && ['UNDER_CLIENT_REVIEW', 'Active', 'in_progress', 'REVISION_REQUESTED', 'under_review', 'revision_requested'].includes(item.contract?.status || item.status) && (
+                    {(item.contract || item.status === 'under_review' || item.status === 'revision_requested') && ([CONTRACT_STATUS.UNDER_CLIENT_REVIEW, CONTRACT_STATUS.ACTIVE, CONTRACT_STATUS.REVISION_REQUESTED].includes(item.contract?.status) || ['in_progress', 'under_review', 'revision_requested'].includes(item.status)) && (
                       <>
                         <button
                           onClick={() => handleClientAcceptDelivery(item.contract?.id, item)}
@@ -1052,8 +1069,8 @@ const CaseTracking = () => {
 
                   {/* Stage 4: Contract & Retainer */}
                   <div className={styles.timelineItem}>
-                    <div className={`${styles.timelineDot} ${selectedCaseModal.contract ? (selectedCaseModal.contract.status === 'Active' ? styles.dotCompleted : styles.dotActive) : styles.dotPending}`}>
-                      {selectedCaseModal.contract && selectedCaseModal.contract.status === 'Active' ? '✓' : '4'}
+                    <div className={`${styles.timelineDot} ${selectedCaseModal.contract ? (selectedCaseModal.contract.status === CONTRACT_STATUS.ACTIVE ? styles.dotCompleted : styles.dotActive) : styles.dotPending}`}>
+                      {selectedCaseModal.contract && selectedCaseModal.contract.status === CONTRACT_STATUS.ACTIVE ? '✓' : '4'}
                     </div>
                     <span className={styles.timelineTitle}>4. Legal Contract Signed & Retainer Paid</span>
                     <span className={styles.timelineDesc}>
@@ -1089,7 +1106,7 @@ const CaseTracking = () => {
                   {/* Dynamic Submitted Deliverables */}
                   {selectedCaseModal.deliverables && selectedCaseModal.deliverables.map((deliv, idx) => (
                     <div key={`dl_${deliv.id || idx}`} className={styles.timelineItem}>
-                      <div className={`${styles.timelineDot} ${deliv.status === 'APPROVED' ? styles.dotCompleted : styles.dotActive}`} style={{ background: deliv.status === 'APPROVED' ? '#10B981' : '#8B5CF6', color: '#fff' }}>📦</div>
+                      <div className={`${styles.timelineDot} ${deliv.status === 'approved' ? styles.dotCompleted : styles.dotActive}`} style={{ background: deliv.status === 'approved' ? '#10B981' : '#8B5CF6', color: '#fff' }}>📦</div>
                       <span className={styles.timelineTitle}>Deliverable: {deliv.title || 'Legal Work Package'} ({deliv.status})</span>
                       <span className={styles.timelineDesc}>{deliv.description || deliv.client_note || deliv.rejection_reason || 'No additional notes provided.'}</span>
                       {deliv.file_url && (

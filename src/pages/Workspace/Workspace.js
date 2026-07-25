@@ -8,6 +8,7 @@ import useChatSocket from '../../hooks/useChatSocket';
 import { SkeletonDashboard } from '../../components/Skeleton/Skeleton';
 import Button from '../../components/Button/Button';
 import styles from './Workspace.module.css';
+import { CONTRACT_STATUS } from '../../constants/contractStatus';
 
 const STATUS_COLORS = {
   pending: '#6B7280', in_progress: '#C8920A', completed: '#1E6B4A', blocked: '#DC2626',
@@ -159,7 +160,7 @@ const Workspace = () => {
         // Backward compatibility: if the gate RPC isn't deployed yet, fall
         // back to the legacy direct update so pre-migration behavior holds.
         if (isMissingFunctionError(error)) {
-          const { error: legacyErr } = await supabase.from('contracts').update({ status: 'completed' }).eq('id', contract.id);
+          const { error: legacyErr } = await supabase.from('contracts').update({ status: CONTRACT_STATUS.COMPLETED }).eq('id', contract.id);
           if (legacyErr) throw legacyErr;
           toast.success('Contract marked as complete!');
           load();
@@ -307,13 +308,13 @@ const Workspace = () => {
             </div>
             <div className={styles.summaryRow}>
               <span>Status</span>
-              <span className={`${styles.contractStatus} ${styles[contract.status]}`}>
+              <span className={`${styles.contractStatus} ${styles[contract.status?.toLowerCase()]}`}>
                 {contract.status}
               </span>
             </div>
           </div>
 
-          {!isLawyer && contract.status === 'active' && (
+          {!isLawyer && contract.status === CONTRACT_STATUS.ACTIVE && (
             <Button variant="primary" onClick={handleComplete} className={styles.completeBtn}>
               Mark Complete
             </Button>
@@ -367,7 +368,7 @@ const Workspace = () => {
                           )}
                         </div>
                       </div>
-                      {isLawyer && contract.status === 'active' ? (
+                      {isLawyer && contract.status === CONTRACT_STATUS.ACTIVE ? (
                         <select
                           value={m.status}
                           onChange={(e) => handleStatusChange(m.id, e.target.value)}
@@ -390,7 +391,7 @@ const Workspace = () => {
                 </ul>
               )}
 
-              {isLawyer && contract.status === 'active' && (
+              {isLawyer && contract.status === CONTRACT_STATUS.ACTIVE && (
                 <div className={styles.addMilestone}>
                   {showMilestoneForm ? (
                     <form onSubmit={handleAddMilestone} className={styles.milestoneForm}>

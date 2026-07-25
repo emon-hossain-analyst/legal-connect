@@ -4,6 +4,7 @@ import { getSignedDocumentUrl } from '../../services/storage.service';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { CONTRACT_STATUS } from '../../constants/contractStatus';
 
 const timeAgo = (date) => {
   if (!date) return '';
@@ -540,7 +541,7 @@ const LawyerCommunicationPortal = () => {
         outstanding_balance: numAmt,
         fee_structure: hasMilestones ? 'Milestone-based' : 'Fixed Fee',
         payment_schedule: hasMilestones ? 'Per Milestone' : '100% Upfront',
-        status: 'Pending Review',
+        status: CONTRACT_STATUS.PENDING_ACCEPTANCE,
         fee_locked: false
       };
       const { data: newC, error } = await supabase.from('contracts').insert([payload]).select().single();
