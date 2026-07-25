@@ -35,18 +35,27 @@ const AdminSettings = () => {
 
       let allInquiries = [];
       try {
-        const { data: inqData } = await supabase.from('contact_inquiries').select('*').order('created_at', { ascending: false }).limit(50);
-        if (inqData && inqData.length > 0) {
+        // contact_inquiries is the single source of truth for support tickets
+        // (created in sql/70 with fn_support_ticket_stats + realtime). A second
+        // read of `contact_messages` used to be merged in here — that table is
+        // not created by any migration and never has been, so the query always
+        // errored. supabase-js resolves rather than throws on query failure, so
+        // the surrounding try/catch never fired and the error was discarded
+        // silently. Removed rather than guarded: merging a phantom table into
+        // this list is what made the inquiry feed unreliable.
+        const { data: inqData, error: inqErr } = await supabase
+          .from('contact_inquiries')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(50);
+        if (inqErr) {
+          console.error('[AdminSettings] contact_inquiries fetch failed:', inqErr.message);
+        } else if (inqData && inqData.length > 0) {
           allInquiries = [...inqData];
         }
-      } catch (e1) {}
-
-      try {
-        const { data: msgData } = await supabase.from('contact_messages').select('*').order('created_at', { ascending: false }).limit(50);
-        if (msgData && msgData.length > 0) {
-          allInquiries = [...allInquiries, ...msgData];
-        }
-      } catch (e2) {}
+      } catch (e1) {
+        console.error('[AdminSettings] contact_inquiries fetch threw:', e1);
+      }
 
       try {
         const localList = JSON.parse(localStorage.getItem('local_contact_inquiries') || '[]');
@@ -113,10 +122,14 @@ const AdminSettings = () => {
         const updatedLocal = localList.map(i => i.id === id ? { ...i, status } : i);
         localStorage.setItem('local_contact_inquiries', JSON.stringify(updatedLocal));
       } else {
-        try { await supabase.from('contact_inquiries').update({ status }).eq('id', id); } catch (e) {}
-        try { await supabase.from('contact_messages').update({ status }).eq('id', id); } catch (e) {}
+        // Was writing to contact_messages too (table does not exist) and
+        // discarding the contact_inquiries result, then updating local state
+        // unconditionally — so a failed write still showed as success and
+        // silently reverted on the next fetch.
+        const { error } = await supabase.from('contact_inquiries').update({ status }).eq('id', id);
+        if (error) throw error;
       }
-      
+
       setInquiries(prev => prev.map(i => i.id === id ? { ...i, status } : i));
       toast.success(`Inquiry marked as ${status}`);
     } catch (err) {
@@ -133,10 +146,10 @@ const AdminSettings = () => {
         const updatedLocal = localList.filter(i => i.id !== id);
         localStorage.setItem('local_contact_inquiries', JSON.stringify(updatedLocal));
       } else {
-        try { await supabase.from('contact_inquiries').delete().eq('id', id); } catch (e) {}
-        try { await supabase.from('contact_messages').delete().eq('id', id); } catch (e) {}
+        const { error } = await supabase.from('contact_inquiries').delete().eq('id', id);
+        if (error) throw error;
       }
-      
+
       setInquiries(prev => prev.filter(i => i.id !== id));
       toast.success('Inquiry deleted successfully');
     } catch (err) {

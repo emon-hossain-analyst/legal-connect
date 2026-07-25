@@ -156,12 +156,13 @@ const Contact = () => {
         };
         res = await supabase.from('contact_inquiries').insert([fallbackObj]);
         if (res.error) {
-          // Additional resilience: try contact_messages or contacts tables, or local storage
-          try { await supabase.from('contact_messages').insert([inquiryObj]); } catch (e) {}
-          try { await supabase.from('contacts').insert([inquiryObj]); } catch (e) {}
-          const localList = JSON.parse(localStorage.getItem('local_contact_inquiries') || '[]');
-          localList.unshift({ id: `local_${Date.now()}`, ...inquiryObj });
-          localStorage.setItem('local_contact_inquiries', JSON.stringify(localList));
+          // Previously this fell back to contact_messages / contacts (neither
+          // table exists in any migration), then stashed the inquiry in the
+          // SUBMITTER's own localStorage and reported success anyway. The
+          // business never received the message and the customer was told it
+          // had sent. Fail loudly instead — a lost enquiry is worse than a
+          // retry prompt.
+          throw res.error;
         }
       }
 
