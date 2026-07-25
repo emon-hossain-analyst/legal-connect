@@ -176,7 +176,11 @@ const LawyerProposalsView = () => {
       toast.success(accept ? 'Counter offer accepted!' : 'Counter offer rejected.');
       fetchMyProposals();
     } catch (err) {
-      toast.error('Failed to respond to counter offer');
+      // Surface the actual Postgres/PostgREST message. A generic string here
+      // made a server-side failure indistinguishable from a network blip and
+      // hid the real cause entirely.
+      console.error('[LawyerProposalsView] respond to counter offer failed:', err);
+      toast.error(err.message || 'Failed to respond to counter offer', { duration: 6000 });
     } finally {
       setRespondingId(null);
     }
