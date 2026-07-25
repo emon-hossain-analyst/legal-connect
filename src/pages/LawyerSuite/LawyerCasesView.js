@@ -118,99 +118,115 @@ const LawyerCasesView = () => {
 
       // Fetch by UUIDs safely
       if (uuidList.length > 0) {
-        try {
-          const { data } = await supabase
+        // NOTE: supabase-js resolves rather than throws on a failed query — it
+        // returns { data: null, error }. A bare try/catch therefore never fires
+        // and the fallback below was dead code, so a broken PostgREST embed
+        // silently rendered an empty page. Always branch on `error`.
+        const casesRes = await supabase
+          .from('cases')
+          .select('*, client:users!cases_client_id_fkey(id, name, full_name, email, profile_picture_url), case_milestones(*)')
+          .in('lawyer_id', uuidList)
+          .order('updated_at', { ascending: false });
+
+        if (casesRes.error) {
+          console.warn('[LawyerCasesView] cases embed failed, falling back to flat select:', casesRes.error.message);
+          const fb = await supabase
             .from('cases')
-            .select('*, client:users!cases_client_id_fkey(id, name, full_name, email, profile_picture_url), case_milestones(*)')
+            .select('*')
             .in('lawyer_id', uuidList)
             .order('updated_at', { ascending: false });
-          if (data) casesData = [...casesData, ...data];
-        } catch (e) {
-          // Fallback if relation name differs
-          try {
-            const { data: fbData } = await supabase
-              .from('cases')
-              .select('*')
-              .in('lawyer_id', uuidList)
-              .order('updated_at', { ascending: false });
-            if (fbData) casesData = [...casesData, ...fbData];
-          } catch (e2) {}
+          if (fb.error) console.error('[LawyerCasesView] cases fallback also failed:', fb.error.message);
+          if (fb.data) casesData = [...casesData, ...fb.data];
+        } else if (casesRes.data) {
+          casesData = [...casesData, ...casesRes.data];
         }
 
-        try {
-          const { data } = await supabase
-            .from('contracts')
-            .select('*, client:users!contracts_client_id_fkey(id, name, full_name, email, profile_picture_url), job_post:job_posts(*)')
-            .in('lawyer_id', uuidList);
-          if (data) contractsData = [...contractsData, ...data];
-        } catch (e) {
-          try {
-            const { data: fbCnt } = await supabase.from('contracts').select('*').in('lawyer_id', uuidList);
-            if (fbCnt) contractsData = [...contractsData, ...fbCnt];
-          } catch (e2) {}
+        const cntRes = await supabase
+          .from('contracts')
+          .select('*, client:users!contracts_client_id_fkey(id, name, full_name, email, profile_picture_url), job_post:job_posts(*)')
+          .in('lawyer_id', uuidList);
+
+        if (cntRes.error) {
+          console.warn('[LawyerCasesView] contracts embed failed, falling back to flat select:', cntRes.error.message);
+          const fb = await supabase.from('contracts').select('*').in('lawyer_id', uuidList);
+          if (fb.data) contractsData = [...contractsData, ...fb.data];
+        } else if (cntRes.data) {
+          contractsData = [...contractsData, ...cntRes.data];
         }
 
-        try {
-          const { data } = await supabase
+        const aptRes = await supabase
+          .from('appointments')
+          .select('*, client:users!appointments_client_id_fkey(id, name, full_name, email, profile_picture_url)')
+          .in('lawyer_id', uuidList)
+          .in('status', ['confirmed', 'reschedule_proposed', 'pending_negotiation', 'completed', 'history']);
+
+        if (aptRes.error) {
+          console.warn('[LawyerCasesView] appointments embed failed, falling back to flat select:', aptRes.error.message);
+          const fb = await supabase
             .from('appointments')
-            .select('*, client:users!appointments_client_id_fkey(id, name, full_name, email, profile_picture_url)')
+            .select('*')
             .in('lawyer_id', uuidList)
-            .in('status', ['confirmed', 'active', 'Upcoming', 'In Progress', 'pending_negotiation', 'completed']);
-          if (data) appointmentsData = [...appointmentsData, ...data];
-        } catch (e) {}
+            .in('status', ['confirmed', 'reschedule_proposed', 'pending_negotiation', 'completed', 'history']);
+          if (fb.data) appointmentsData = [...appointmentsData, ...fb.data];
+        } else if (aptRes.data) {
+          appointmentsData = [...appointmentsData, ...aptRes.data];
+        }
 
-        try {
-          const { data } = await supabase.from('payments').select('*').in('lawyer_id', uuidList);
-          if (data) paymentsData = [...paymentsData, ...data];
-        } catch (e) {}
+        const payRes = await supabase.from('payments').select('*').in('lawyer_id', uuidList);
+        if (payRes.error) console.warn('[LawyerCasesView] payments fetch failed:', payRes.error.message);
+        if (payRes.data) paymentsData = [...paymentsData, ...payRes.data];
       }
 
-      // Fetch by Integers safely
+      // Fetch by Integers safely (same error-branching rationale as above).
       if (intList.length > 0) {
-        try {
-          const { data } = await supabase
+        const casesResInt = await supabase
+          .from('cases')
+          .select('*, client:users!cases_client_id_fkey(id, name, full_name, email, profile_picture_url), case_milestones(*)')
+          .in('lawyer_id', intList)
+          .order('updated_at', { ascending: false });
+
+        if (casesResInt.error) {
+          const fb = await supabase
             .from('cases')
-            .select('*, client:users!cases_client_id_fkey(id, name, full_name, email, profile_picture_url), case_milestones(*)')
+            .select('*')
             .in('lawyer_id', intList)
             .order('updated_at', { ascending: false });
-          if (data) casesData = [...casesData, ...data];
-        } catch (e) {
-          try {
-            const { data: fbData } = await supabase
-              .from('cases')
-              .select('*')
-              .in('lawyer_id', intList)
-              .order('updated_at', { ascending: false });
-            if (fbData) casesData = [...casesData, ...fbData];
-          } catch (e2) {}
+          if (fb.data) casesData = [...casesData, ...fb.data];
+        } else if (casesResInt.data) {
+          casesData = [...casesData, ...casesResInt.data];
         }
 
-        try {
-          const { data } = await supabase
-            .from('contracts')
-            .select('*, client:users!contracts_client_id_fkey(id, name, full_name, email, profile_picture_url), job_post:job_posts(*)')
-            .in('lawyer_id', intList);
-          if (data) contractsData = [...contractsData, ...data];
-        } catch (e) {
-          try {
-            const { data: fbCnt } = await supabase.from('contracts').select('*').in('lawyer_id', intList);
-            if (fbCnt) contractsData = [...contractsData, ...fbCnt];
-          } catch (e2) {}
+        const cntResInt = await supabase
+          .from('contracts')
+          .select('*, client:users!contracts_client_id_fkey(id, name, full_name, email, profile_picture_url), job_post:job_posts(*)')
+          .in('lawyer_id', intList);
+
+        if (cntResInt.error) {
+          const fb = await supabase.from('contracts').select('*').in('lawyer_id', intList);
+          if (fb.data) contractsData = [...contractsData, ...fb.data];
+        } else if (cntResInt.data) {
+          contractsData = [...contractsData, ...cntResInt.data];
         }
 
-        try {
-          const { data } = await supabase
+        const aptResInt = await supabase
+          .from('appointments')
+          .select('*, client:users!appointments_client_id_fkey(id, name, full_name, email, profile_picture_url)')
+          .in('lawyer_id', intList)
+          .in('status', ['confirmed', 'reschedule_proposed', 'pending_negotiation', 'completed', 'history']);
+
+        if (aptResInt.error) {
+          const fb = await supabase
             .from('appointments')
-            .select('*, client:users!appointments_client_id_fkey(id, name, full_name, email, profile_picture_url)')
+            .select('*')
             .in('lawyer_id', intList)
-            .in('status', ['confirmed', 'active', 'Upcoming', 'In Progress', 'pending_negotiation', 'completed']);
-          if (data) appointmentsData = [...appointmentsData, ...data];
-        } catch (e) {}
+            .in('status', ['confirmed', 'reschedule_proposed', 'pending_negotiation', 'completed', 'history']);
+          if (fb.data) appointmentsData = [...appointmentsData, ...fb.data];
+        } else if (aptResInt.data) {
+          appointmentsData = [...appointmentsData, ...aptResInt.data];
+        }
 
-        try {
-          const { data } = await supabase.from('payments').select('*').in('lawyer_id', intList);
-          if (data) paymentsData = [...paymentsData, ...data];
-        } catch (e) {}
+        const payResInt = await supabase.from('payments').select('*').in('lawyer_id', intList);
+        if (payResInt.data) paymentsData = [...paymentsData, ...payResInt.data];
       }
 
       // Merge into deduplicated map
