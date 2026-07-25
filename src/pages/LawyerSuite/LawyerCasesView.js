@@ -287,10 +287,11 @@ const LawyerCasesView = () => {
               linked_appointment_id: apt.id,
               title: apt.session_type ? `${apt.session_type} (${apt.reason || 'Consultation'})` : apt.reason || 'Legal Consultation Session',
               description: apt.notes || apt.reason || 'Scheduled client consultation matter.',
+              // Canonical appointment vocabulary (sql/75).
               status:
-                apt.status === 'confirmed' || apt.status === 'active' || apt.status === 'Upcoming' || apt.status === 'In Progress'
+                apt.status === 'confirmed' || apt.status === 'reschedule_proposed'
                   ? 'active'
-                  : apt.status === 'completed'
+                  : apt.status === 'completed' || apt.status === 'history'
                   ? 'completed'
                   : 'pending',
               practice_area: apt.practice_area || 'Legal Consultation',

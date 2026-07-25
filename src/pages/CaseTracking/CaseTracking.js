@@ -225,7 +225,10 @@ const CaseTracking = () => {
           .from('appointments')
           .select('*')
           .or(userIds.map(id => `client_id.eq.${id}`).join(','))
-          .in('status', ['confirmed', 'active', 'Upcoming', 'In Progress', 'pending_negotiation', 'completed']);
+          // Canonical appointment vocabulary (sql/75). 'active', 'Upcoming' and
+          // 'In Progress' no longer exist, and completed consultations are now
+          // 'history' — omitting it hid every finished consultation.
+          .in('status', ['confirmed', 'reschedule_proposed', 'pending_negotiation', 'completed', 'history']);
         if (data) {
           aptData = data;
           aptData.forEach(apt => { if (apt.lawyer_id) allLawyerIds.add(apt.lawyer_id); });

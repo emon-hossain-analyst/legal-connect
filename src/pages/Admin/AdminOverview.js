@@ -97,7 +97,14 @@ const AdminOverview = () => {
         supabase.from('lawyers').select('*', { count: 'exact', head: true }),
         supabase.from('lawyers').select('*', { count: 'exact', head: true }).eq('verification_status', 'verified'),
         supabase.from('job_posts').select('*', { count: 'exact', head: true }).eq('status', 'open'),
-        supabase.from('contracts').select('*', { count: 'exact', head: true }).in('status', ['active', 'Active', 'Pending Review', 'pending_review', 'Draft', 'draft']),
+        // Canonical contract vocabulary (sql/73). Every value previously listed
+        // here ('active', 'Active', 'Pending Review', 'Draft', ...) was
+        // normalised away, so this counter silently read 0.
+        supabase.from('contracts').select('*', { count: 'exact', head: true }).in('status', [
+          'DRAFT', 'PENDING_ACCEPTANCE', 'ACCEPTED', 'ACTIVE',
+          'MILESTONE_IN_PROGRESS', 'MILESTONE_COMPLETED', 'DELIVERY_SUBMITTED',
+          'UNDER_CLIENT_REVIEW', 'REVISION_REQUESTED', 'APPROVED', 'COMPLETION_REQUESTED'
+        ]),
         supabase.from('users').select('*').order('created_at', { ascending: false }).limit(5),
         supabase.from('lawyers').select('*', { count: 'exact', head: true }).eq('verification_status', 'pending'),
         supabase.from('feedback').select('*', { count: 'exact', head: true }).eq('is_flagged', true),

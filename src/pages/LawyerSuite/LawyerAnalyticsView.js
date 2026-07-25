@@ -45,7 +45,8 @@ const LawyerAnalyticsView = () => {
         supabase.from('appointments').select('*', { count: 'exact', head: true })
           .in('lawyer_id', userIds).gte('created_at', sinceISO),
         supabase.from('appointments').select('*', { count: 'exact', head: true })
-          .in('lawyer_id', userIds).in('status', ['confirmed', 'Upcoming', 'In Progress']),
+          // Canonical appointment vocabulary (sql/75) — 'Upcoming'/'In Progress' are gone.
+          .in('lawyer_id', userIds).in('status', ['confirmed', 'reschedule_proposed']),
         supabase.from('cases').select('*', { count: 'exact', head: true })
           .in('lawyer_id', userIds).gte('created_at', sinceISO),
         supabase.from('cases').select('*', { count: 'exact', head: true })
