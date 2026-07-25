@@ -485,10 +485,10 @@ const LawyerCasesView = () => {
         pendingContracts++;
       }
 
-      const fee = Number(c.contract?.amount || c.contract?.agreed_amount || c.agreed_fee || 0);
-      if (st === 'completed' || c.payment_status === 'paid' || c.contract?.status === 'active') {
-        totalEarnings += fee;
-      }
+      // Earnings are computed from actual payments below, not from contract
+      // value. This previously summed contracts.amount for anything merely
+      // 'active', so it reported money that had never been received — and
+      // disagreed with the admin portal, which counts only collected fees.
 
       // Check client rating if available
       if (c.client?.rating) {
@@ -510,6 +510,13 @@ const LawyerCasesView = () => {
 
     const averageRating = ratingCount > 0 ? totalRatings / ratingCount : 4.9;
 
+    // Net earnings = money actually received, after the platform fee. Uses
+    // lawyer_payout (set by the commission trigger) so this matches the
+    // admin portal and the billing screen instead of contract face value.
+    totalEarnings = (payments || [])
+      .filter((p) => ['completed', 'released', 'paid'].includes(String(p.status).toLowerCase()))
+      .reduce((sum, p) => sum + Number(p.lawyer_payout ?? p.amount ?? 0), 0);
+
     return {
       activeCases,
       pendingContracts,
@@ -518,7 +525,7 @@ const LawyerCasesView = () => {
       upcomingMeetings,
       averageRating,
     };
-  }, [cases, appointments]);
+  }, [cases, appointments, payments]);
 
   // 3. Filtered, Searched & Sorted Cases
   const filteredCases = useMemo(() => {
