@@ -205,52 +205,38 @@ const AdminOverview = () => {
       }
       setRecentProposals(prData);
 
-      // Resilient Lawyer Payouts & Earnings Breakdown
+      // Lawyer Payouts & Earnings Breakdown.
+      //
+      // Reads v_lawyer_earnings (sql/92), which joins lawyer_payouts to the
+      // commission ledger server-side. This previously queried
+      // commission_transactions directly, where RLS filtered every row out for
+      // the admin — so the per-lawyer fee column rendered 0.00 while the
+      // headline KPI (which reads a view, and therefore bypasses RLS) showed
+      // the real total. The dead try/catch meant that RLS block raised nothing.
       let lPayouts = [];
-      try {
-        let pData = []; try { const r = await supabase.from('lawyer_payouts').select('*').order('total_earned', { ascending: false }).limit(6); pData = r.data || []; } catch (e) {}
-        if (pData && pData.length > 0) {
-          const lawyerIds = [...new Set(pData.map(p => p.lawyer_id).filter(Boolean))];
-          let userMap = {};
-          if (lawyerIds.length > 0) {
-            let usersData = []; try { const r = await supabase.from('users').select('id, name, email').in('id', lawyerIds); usersData = r.data || []; } catch (e) {}
-            usersData.forEach(u => { userMap[u.id] = u; });
-          }
-          let commMap = {};
-          try {
-            const { data: ctData } = await supabase
-              .from('commission_transactions')
-              .select('lawyer_id, commission_amount')
-              .in('lawyer_id', lawyerIds);
-            (ctData || []).forEach(row => {
-              commMap[row.lawyer_id] = (commMap[row.lawyer_id] || 0) + Number(row.commission_amount || 0);
-            });
-          } catch (e) {}
-          lPayouts = pData.map(item => ({
-            ...item,
-            lawyer: userMap[item.lawyer_id] || { name: 'Verified Lawyer', email: '' },
-            commission_total: commMap[item.lawyer_id] || 0
-          }));
-        } else {
-          // Fallback: if lawyer_payouts table is empty, show top verified lawyers
-          let topLawyers = []; try { const r = await supabase.from('lawyers').select('*').eq('verification_status', 'verified').limit(6); topLawyers = r.data || []; } catch (e) {}
-          if (topLawyers && topLawyers.length > 0) {
-            const userIds = topLawyers.map(l => l.user_id).filter(Boolean);
-            let uMap = {};
-            if (userIds.length > 0) {
-              let uList = []; try { const r = await supabase.from('users').select('id, name, email').in('id', userIds); uList = r.data || []; } catch (e) {}
-              uList.forEach(u => { uMap[u.id] = u; });
-            }
-            lPayouts = topLawyers.map(tl => ({
-              id: tl.id,
-              lawyer_id: tl.user_id,
-              total_earned: (tl.hourly_rate || 5000) * 10,
-              pending_payout: 0,
-              lawyer: uMap[tl.user_id] || { name: 'Verified Lawyer', email: '' }
-            }));
-          }
-        }
-      } catch (e4) {}
+      const { data: earningsRows, error: earningsErr } = await supabase
+        .from('v_lawyer_earnings')
+        .select('*')
+        .order('total_earned', { ascending: false })
+        .limit(6);
+
+      if (earningsErr) {
+        console.error('[AdminOverview] v_lawyer_earnings unavailable:', earningsErr.message);
+      } else {
+        lPayouts = (earningsRows || []).map((row) => ({
+          id: row.lawyer_id,
+          lawyer_id: row.lawyer_id,
+          total_earned: row.total_earned,
+          pending_payout: row.pending_payout,
+          commission_total: row.commission_total,
+          lawyer: { name: row.lawyer_name || 'Verified Lawyer', email: row.lawyer_email || '' }
+        }));
+      }
+
+      // The previous empty-state fallback synthesised earnings as
+      // (hourly_rate || 5000) * 10 and rendered them to the admin as real
+      // financials. Removed — an empty table is the correct representation of
+      // "nothing has been earned yet".
       setLawyerBreakdown(lPayouts);
 
       let unreadInquiriesCount = unreadInquiries || 0;
