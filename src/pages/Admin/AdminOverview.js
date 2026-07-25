@@ -60,6 +60,9 @@ const AdminOverview = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'feedback' }, () => fetchDashboardData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'contact_inquiries' }, () => fetchDashboardData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => fetchDashboardData())
+      // Platform-fee ledger drives the revenue KPI, and a refund adjusts it
+      // without touching payments — subscribe or the figure goes stale.
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'commission_transactions' }, () => fetchDashboardData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'lawyer_payouts' }, () => fetchDashboardData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, () => fetchDashboardData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'cases' }, () => fetchDashboardData())
@@ -109,11 +112,30 @@ const AdminOverview = () => {
         supabase.from('lawyers').select('*', { count: 'exact', head: true }).eq('verification_status', 'pending'),
         supabase.from('feedback').select('*', { count: 'exact', head: true }).eq('is_flagged', true),
         supabase.from('contact_inquiries').select('*', { count: 'exact', head: true }).eq('status', 'unread'),
-        supabase.from('payments').select('amount, commission_amount').in('status', ['completed', 'released']),
+        // commission_transactions is the ledger of record for platform fees
+        // (sql/88). This KPI previously summed payments.commission_amount
+        // while the per-lawyer table below summed the ledger — two different
+        // numbers on the same screen, diverging after any partial refund,
+        // and silently omitting any payment whose fee row was never written.
+        supabase.from('v_platform_revenue').select('platform_revenue, gross_volume, transaction_count').maybeSingle(),
         supabase.from('appointments').select('*', { count: 'exact', head: true }),
       ]);
 
-      const calculatedRevenue = (finSummary || []).reduce((sum, p) => sum + Number(p.commission_amount || 0), 0);
+      let calculatedRevenue = Number(finSummary?.platform_revenue || 0);
+      if (!finSummary) {
+        // v_platform_revenue not deployed yet — fall back to the ledger table
+        // directly rather than to payments, so the source stays consistent.
+        const { data: ledgerRows, error: ledgerErr } = await supabase
+          .from('commission_transactions')
+          .select('commission_amount, status');
+        if (ledgerErr) {
+          console.error('[AdminOverview] platform fee ledger unavailable:', ledgerErr.message);
+        } else {
+          calculatedRevenue = (ledgerRows || [])
+            .filter((r) => (r.status || 'completed') !== 'refunded')
+            .reduce((sum, r) => sum + Number(r.commission_amount || 0), 0);
+        }
+      }
 
       setStats({
         totalUsers: usersCount || 0,
