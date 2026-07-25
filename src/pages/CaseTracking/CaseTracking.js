@@ -27,7 +27,9 @@ const STATUS_COLORS = {
 const STATUS_LABELS = {
   open: 'Open for Proposals',
   pending: 'Pending Selection',
-  pending_acceptance: 'Pending Acceptance',
+  // This state means the CLIENT must pick a proposal — "Pending Acceptance"
+  // read as though someone else owed an action, so nobody knew to act.
+  pending_acceptance: 'Awaiting Your Selection',
   in_progress: 'In Progress',
   active: 'In Progress',
   confirmed: 'Consultation Active',
@@ -983,8 +985,14 @@ const CaseTracking = () => {
                       Track Progress & Timeline
                     </button>
                     {item.proposal_count > 0 && item.raw_type === 'job_post' && (
-                      <button onClick={() => navigate('/client/portal/my-posts')} className={styles.btnSecondary}>
-                        View Proposals ({item.proposal_count})
+                      // Primary styling: when a post is awaiting the client's
+                      // selection this is the required next action, and the
+                      // Accept & Hire control lives on that page — not here.
+                      <button
+                        onClick={() => navigate('/client/portal/my-posts')}
+                        className={item.status === 'pending_acceptance' ? styles.btnPrimary : styles.btnSecondary}
+                      >
+                        Review &amp; Hire ({item.proposal_count})
                       </button>
                     )}
                     {item.lawyer && (
