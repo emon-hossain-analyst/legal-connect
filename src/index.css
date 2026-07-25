@@ -53,8 +53,17 @@ input:focus, textarea:focus, select:focus {
   background-position: 0 88%;
 }
 .material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
   font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  line-height: 1;
   vertical-align: middle;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
 }
 .verified-badge {
   font-variation-settings: 'FILL' 1;

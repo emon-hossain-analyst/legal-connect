@@ -113,7 +113,7 @@ module.exports = {
         "headline-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600"}]
       },
       animation: {
-        'in': 'fadeIn 0.3s ease-in-out',
+        fadeIn: 'fadeIn 0.3s ease-in-out',
       },
       keyframes: {
         fadeIn: {
